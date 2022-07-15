@@ -95,5 +95,9 @@ def test_snmp_memory_load(duthosts, enum_rand_one_per_hwsku_hostname, localhost,
     snmp_facts = get_snmp_facts(localhost, host=host_ip, version="v2c",
                                 community=creds_all_duts[duthost.hostname]["snmp_rocommunity"], wait=True)['ansible_facts']
     mem_free = duthost.shell("grep MemFree /proc/meminfo | awk '{print $2}'")['stdout']
-    pytest_assert(CALC_DIFF(snmp_facts['ansible_sysTotalFreeMemery'], mem_free) < percent,
-                  "sysTotalFreeMemery differs by more than {}".format(percent))
+    snmp_free_mem = snmp_facts['ansible_sysTotalFreeMemery']
+    diff_absolute= abs(int(mem_free) - snmp_free_mem)
+    diff_percent = CALC_DIFF(snmp_free_mem, mem_free)
+    diff_threshold = 10000
+    pytest_assert(diff_percent < percent or diff_absolute < diff_threshold,
+                  "sysTotalFreeMemery differs by more than {}% and {}: {}% and {}".format(percent, diff_threshold, diff_percent, diff_absolute))
