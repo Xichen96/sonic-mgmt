@@ -17,7 +17,7 @@ pytestmark = [
 logger = logging.getLogger(__name__)
 
 def get_upstream_neigh_type(topo):
-    if 't0' in topo or 'dualtor' in topo:
+    if 't0' in topo or 'dualtor' in topo or "mgmttor" in topo:
         return 't1'
     elif 't1' in topo:
         return 't2'
@@ -29,8 +29,8 @@ def get_upstream_neigh_type(topo):
 def get_upstream_neigh(tb):
     """
     Get the information for upstream neighbors present in the testbed
-    
-    returns dict: {"upstream_neigh_name" : (ipv4_intf_ip, ipv6_intf_ip)} 
+
+    returns dict: {"upstream_neigh_name" : (ipv4_intf_ip, ipv6_intf_ip)}
     """
     upstream_neighbors = {}
     neigh_type = get_upstream_neigh_type(tb['topo']['name'])
@@ -76,25 +76,25 @@ def get_uplink_ns(tbinfo, bgp_name_to_ns_mapping):
 def verify_default_route_in_app_db(duthost, tbinfo, af, uplink_ns):
     """
     Verify the nexthops for the default routes match the ip interfaces
-    configured on the peer device 
+    configured on the peer device
     """
     default_route = duthost.get_default_route_from_app_db(af)
     pytest_assert(default_route, "default route not present in APP_DB")
     logging.info("default route from app db {}".format(default_route))
-     
-    nexthops = list() 
+
+    nexthops = list()
     if uplink_ns:
-        # multi-asic case: Now we have all routes on all asics, get the uplink routes only 
+        # multi-asic case: Now we have all routes on all asics, get the uplink routes only
         for ns in uplink_ns:
             nexthops += default_route[ns].values()[0]['value']['nexthop'].split(',')
     else:
         key = default_route.keys()[0]
         nexthop_list = default_route[key].get('value', {}).get('nexthop', None)
         nexthops += list(nexthop_list.split(','))
-     
+
     pytest_assert(nexthops is not None, "Default route has not nexthops")
     logging.info("nexthops in app_db {}".format(nexthops) )
-    
+
     upstream_neigh = get_upstream_neigh(tbinfo)
     pytest_assert(upstream_neigh is not None, "No upstream neighbors in the testbed")
 
@@ -165,7 +165,7 @@ def test_default_route_with_bgp_flap(duthosts, enum_rand_one_per_hwsku_frontend_
     """
     Check the default route present in app_db has the correct nexthops ip
     Check the default route is removed when the bgp sessions are shutdown
-     
+
     """
 
     pytest_require('t1-backend' not in tbinfo['topo']['name'], \
@@ -173,16 +173,16 @@ def test_default_route_with_bgp_flap(duthosts, enum_rand_one_per_hwsku_frontend_
                 .format(tbinfo['topo']['name']))
 
     duthost = duthosts[enum_rand_one_per_hwsku_frontend_hostname]
-    
+
     config_facts  = duthost.config_facts(host=duthost.hostname, source="running")['ansible_facts']
     bgp_neighbors = config_facts.get('BGP_NEIGHBOR', {})
-    
+
     uplink_ns = None
     # Get uplink namespaces/asics for multi-asic
     if duthost.is_multi_asic:
         bgp_name_to_ns_mapping = duthost.get_bgp_name_to_ns_mapping()
         uplink_ns = get_uplink_ns(tbinfo, bgp_name_to_ns_mapping)
-    
+
     af_list = ['ipv4', 'ipv6']
 
     # verify the default route is correct in the app db
