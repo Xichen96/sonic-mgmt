@@ -21,6 +21,15 @@ pytestmark = [
     pytest.mark.topology('any')
 ]
 
+MAX_WAIT_TIME_FOR_SYSTEM_CHECKS = 300
+
+
+@pytest.fixture(scope="module", autouse=True)
+def set_max_time_for_system_checks(duthost):
+    global MAX_WAIT_TIME_FOR_SYSTEM_CHECKS
+    if duthost.facts["platform"] == "x86_64-cel_e1031-r0":
+        MAX_WAIT_TIME_FOR_SYSTEM_CHECKS = 900
+
 
 @pytest.fixture(scope="module")
 def delayed_services(duthosts, enum_rand_one_per_hwsku_hostname):
@@ -60,7 +69,7 @@ def test_reload_configuration(duthosts, enum_rand_one_per_hwsku_hostname,
     asic_type = duthost.facts["asic_type"]
 
     if config_force_option_supported(duthost):
-        assert wait_until(300, 20, 0, config_system_checks_passed, duthost)
+        assert wait_until(MAX_WAIT_TIME_FOR_SYSTEM_CHECKS, 20, 0, config_system_checks_passed, duthost)
 
     logging.info("Reload configuration")
     duthost.shell("sudo config reload -y &>/dev/null", executable="/bin/bash")
@@ -69,12 +78,9 @@ def test_reload_configuration(duthosts, enum_rand_one_per_hwsku_hostname,
     wait_critical_processes(duthost)
 
     logging.info("Wait some time for all the transceivers to be detected")
-    max_wait_time_for_transceivers = 300
-    if duthost.facts["platform"] == "x86_64-cel_e1031-r0":
-        max_wait_time_for_transceivers = 900
-    assert wait_until(max_wait_time_for_transceivers, 20, 0, check_all_interface_information,
+    assert wait_until(MAX_WAIT_TIME_FOR_SYSTEM_CHECKS, 20, 0, check_all_interface_information,
                       duthost, interfaces, xcvr_skip_list), "Not all transceivers are detected \
-    in {} seconds".format(max_wait_time_for_transceivers)
+    in {} seconds".format(MAX_WAIT_TIME_FOR_SYSTEM_CHECKS)
 
     logging.info("Check transceiver status")
     for asic_index in duthost.get_frontend_asic_ids():
@@ -134,7 +140,7 @@ def test_reload_configuration_checks(duthosts, enum_rand_one_per_hwsku_hostname,
     # config reload command shouldn't work immediately after system reboot
     assert "Retry later" in out['stdout']
 
-    assert wait_until(300, 20, 0, config_system_checks_passed, duthost, delayed_services)
+    assert wait_until(MAX_WAIT_TIME_FOR_SYSTEM_CHECKS, 20, 0, config_system_checks_passed, duthost, delayed_services)
 
     # After the system checks succeed the config reload command should not throw error
     out = duthost.shell("sudo config reload -y",
@@ -148,7 +154,7 @@ def test_reload_configuration_checks(duthosts, enum_rand_one_per_hwsku_hostname,
     out = duthost.shell("sudo config reload -y",
                         executable="/bin/bash", module_ignore_errors=True)
     assert "Retry later" in out['stdout']
-    assert wait_until(300, 20, 0, config_system_checks_passed, duthost, delayed_services)
+    assert wait_until(MAX_WAIT_TIME_FOR_SYSTEM_CHECKS, 20, 0, config_system_checks_passed, duthost, delayed_services)
 
     logging.info("Stopping swss docker and checking config reload")
     if duthost.is_multi_asic:
@@ -167,4 +173,4 @@ def test_reload_configuration_checks(duthosts, enum_rand_one_per_hwsku_hostname,
     out = duthost.shell("sudo config reload -y -f", executable="/bin/bash")
     assert "Retry later" not in out['stdout']
 
-    assert wait_until(300, 20, 0, config_system_checks_passed, duthost, delayed_services)
+    assert wait_until(MAX_WAIT_TIME_FOR_SYSTEM_CHECKS, 20, 0, config_system_checks_passed, duthost, delayed_services)
