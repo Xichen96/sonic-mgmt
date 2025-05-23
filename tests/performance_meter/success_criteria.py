@@ -4,6 +4,8 @@ import statistics
 import datetime
 import pandas as pd
 from tests.common.helpers.assertions import pytest_assert
+from test_reporting.telemetry.reporter_factory import TelemetryReporterFactory
+import test_reporting.telemetry.metrics as metrics
 
 
 # find success criteria function by exact name match
@@ -59,8 +61,10 @@ def random_success_20_perc(duthost, test_result, **kwargs):
 # process results of all runs, so there could be an optional success
 # criteria stats function, named with a "_stats" suffix, like
 # "bgp_up_stats", taking all the same kwargs variables as its single run
-# version. Unlike the single test run counter part, it takes
-# passed_op_precheck which is the test result of all test runs that
+# version. Unlike the single test run counter part, it takes 2 arguments.
+# First is metadata, which is a dict of test metadata, like where its
+# defined (config_file_path), test_name, duthost, tbinfo etc.
+# Second passed_op_precheck which is the test result of all test runs that
 # passed pre op sanity_check. The passed_op_precheck is a list of test
 # results. Test result has the following format:
 # {
@@ -75,7 +79,7 @@ def random_success_20_perc(duthost, test_result, **kwargs):
 
 
 # sample success criteria stats
-def random_success_20_perc_stats(passed_op_precheck, **kwargs):
+def random_success_20_perc_stats(metadata, passed_op_precheck, **kwargs):
     finished_op = list(filter(lambda item: item["op_success"], passed_op_precheck))
     if "success_rate_op" in kwargs:
         success_rate_op = len(finished_op) / len(passed_op_precheck)
@@ -113,9 +117,19 @@ def random_success_20_perc_stats(passed_op_precheck, **kwargs):
     logging.warning("Foo is {}".format(kwargs["foo"]))
 
 
+def get_telemetry_reporter(metadata):
+    common_labels = {
+        metrics.METRIC_LABEL_TESTBED: metadata["tbinfo"]["conf-name"],
+        metrics.METRIC_LABEL_TEST_BUILD: metadata["duthost"].os_version,
+        metrics.METRIC_LABEL_TEST_CASE: "performance_meter",
+        metrics.METRIC_LABEL_DEVICE_ID: metadata["duthost"].hostname,
+    }
+    return TelemetryReporterFactory.create_final_metrics_reporter(common_labels)
+
+
 # function for printing out collected stats on display_variable/s provided through config
 # this variable should have been collected by success_criteria and stored in test results
-def display_variable_stats(passed_op_precheck, **kwargs):
+def display_variable_stats(metadata, passed_op_precheck, **kwargs):
     finished_op = list(filter(lambda item: item["op_success"], passed_op_precheck))
     success_rate_op = len(finished_op) / len(passed_op_precheck)
     logging.warning("Success rate of op is {}".format(success_rate_op))
@@ -149,6 +163,17 @@ def display_variable_stats(passed_op_precheck, **kwargs):
             logging.warning("Quantile {} of {} is {}".format(quantile, display_variable, result))
             display_variable_stats[display_variable]["quantile"] = quantile
             display_variable_stats[display_variable]["quantile_result"] = result
+    if "push_to_kusto" in kwargs:
+        telemetry_reporter = get_telemetry_reporter(metadata)
+        for display_variable, my_metrics in kwargs["push_to_kusto"].items():
+            for metric in my_metrics:
+                gauge_metric = metrics.GaugeMetric(name="{}_{}".format(display_variable, metric),
+                                                   description="Stat {} of variable {}".format(metric,
+                                                                                               display_variable),
+                                                   unit="N/A",
+                                                   reporter=telemetry_reporter)
+                gauge_metric.record({}, display_variable_stats[display_variable][metric])
+                gauge_metric.report()
     return display_variable_stats
 
 
@@ -218,8 +243,8 @@ def swss_create_switch(duthost, test_result, **kwargs):
     return success_criteria_by_syslog(duthost, test_result, **{**kwargs, **extra_vars})
 
 
-def swss_create_switch_stats(passed_op_precheck, **kwargs):
-    variable_stats = display_variable_stats(passed_op_precheck,
+def swss_create_switch_stats(metadata, passed_op_precheck, **kwargs):
+    variable_stats = display_variable_stats(metadata, passed_op_precheck,
                                             **{**kwargs,
                                                "display_variable": "swss_create_switch_start_time",
                                                "swss_create_switch_start_time_quantile": 1})
@@ -252,8 +277,8 @@ def startup_mem_usage_after_bgp_up(duthost, test_result, **kwargs):
     return checker
 
 
-def startup_mem_usage_after_bgp_up_stats(passed_op_precheck, **kwargs):
-    variable_stats = display_variable_stats(passed_op_precheck,
+def startup_mem_usage_after_bgp_up_stats(metadata, passed_op_precheck, **kwargs):
+    variable_stats = display_variable_stats(metadata, passed_op_precheck,
                                             **{**kwargs,
                                                "display_variables": ["time_to_pass", "mem_used_perc"],
                                                "time_to_pass_quantile": 0.90,

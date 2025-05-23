@@ -112,7 +112,7 @@ def test_performance(duthost, call_sanity_check, reorged_test_config, store_test
                                        path, test_name, op, success_criteria, run_index))
 
 
-def process_single_test_case(test_config, single_test_results):
+def process_single_test_case(metadata, test_config, single_test_results):
     # test environment issue
     success_criteria = test_config["success_criteria"]
     passed_sanity_check = list(filter(lambda item: item is not None, single_test_results))
@@ -142,7 +142,8 @@ def process_single_test_case(test_config, single_test_results):
                                                                                 success_criteria + "_stats"))
     if success_criteria_stats:
         try:
-            success_criteria_stats(passed_op_precheck, **filter_vars(test_config, success_criteria))
+            success_criteria_stats(metadata, passed_op_precheck,
+                                   **filter_vars(test_config, success_criteria))
         except pytest.fail.Exception as e:
             # assertion error, we want to catch this and report this
             return e
@@ -154,7 +155,7 @@ def process_single_test_case(test_config, single_test_results):
     return True
 
 
-def test_performance_stats(filtered_test_config, store_test_result):
+def test_performance_stats(duthost, tbinfo, filtered_test_config, store_test_result):
     failed_tests = []
     for path, test_config_for_path in filtered_test_config.items():
         logging.warning("Analyzing result for config file {}".format(path))
@@ -162,7 +163,11 @@ def test_performance_stats(filtered_test_config, store_test_result):
             logging.warning("Analyzing result for test case {}".format(test_name))
             single_test_results = map(lambda result: {**result, **result[path][test_name]},
                                       store_test_result[test_config["op"]][:test_config["run"]])
-            result = process_single_test_case(test_config, single_test_results)
+            metadata = {"duthost": duthost,
+                        "tbinfo": tbinfo,
+                        "config_file_path": path,
+                        "test_name": test_name}
+            result = process_single_test_case(metadata, test_config, single_test_results)
             if result is not True:
                 failed_tests.append((path, test_name, result))
             logging.warning("Finished analyzing result for test case {}".format(test_name))
