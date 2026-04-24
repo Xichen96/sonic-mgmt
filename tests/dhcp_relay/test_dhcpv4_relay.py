@@ -521,6 +521,18 @@ def test_dhcp_relay_with_non_default_vrf(
         raise err
 
     finally:
+        # Bring BGP down before unbinding interfaces from the VRF. When an
+        # interface returns to the default VRF, the kernel briefly rejects
+        # zebra's RTM_NEWROUTE with ENODEV until the interface is fully
+        # resynced; FRR does not retry, so any route attempted in that window
+        # stays installed=false / failed=true forever and monit's routeCheck
+        # later flags it as ERR in syslog (failing the loganalyzer teardown
+        # and triggering a sanity reboot). Shutting BGP down first means
+        # there are no fresh routes for zebra to install during the unbind,
+        # and the matching startup at the end re-advertises everything once
+        # the interface is stable in the default VRF again.
+        duthost.shell("sudo config bgp shutdown all")
+
         duthost.shell(f"config dhcpv4_relay del {vlan_iface}", module_ignore_errors=True)
 
         # Unbind the source-interface Loopback from CLIENT_VRF_NAME before
@@ -554,6 +566,8 @@ def test_dhcp_relay_with_non_default_vrf(
         _restore_interface_ip_entries(duthost, saved_vlan_ips)
         _restore_interface_ip_entries(duthost, saved_pc_ips)
         duthost.shell("sudo config save -y")
+
+        duthost.shell("sudo config bgp startup all")
 
 
 def test_dhcp_relay_with_different_non_default_vrf(
@@ -723,6 +737,18 @@ def test_dhcp_relay_with_different_non_default_vrf(
         raise err
 
     finally:
+        # Bring BGP down before unbinding interfaces from the VRF. When an
+        # interface returns to the default VRF, the kernel briefly rejects
+        # zebra's RTM_NEWROUTE with ENODEV until the interface is fully
+        # resynced; FRR does not retry, so any route attempted in that window
+        # stays installed=false / failed=true forever and monit's routeCheck
+        # later flags it as ERR in syslog (failing the loganalyzer teardown
+        # and triggering a sanity reboot). Shutting BGP down first means
+        # there are no fresh routes for zebra to install during the unbind,
+        # and the matching startup at the end re-advertises everything once
+        # the interface is stable in the default VRF again.
+        duthost.shell("sudo config bgp shutdown all")
+
         duthost.shell(f"config dhcpv4_relay del {vlan_iface}", module_ignore_errors=True)
 
         # Unbind the source-interface Loopback from SERVER_VRF_NAME before
@@ -758,6 +784,8 @@ def test_dhcp_relay_with_different_non_default_vrf(
         _restore_interface_ip_entries(duthost, saved_vlan_ips)
         _restore_interface_ip_entries(duthost, saved_pc_ips)
         duthost.shell("sudo config save -y")
+
+        duthost.shell("sudo config bgp startup all")
 
 
 @pytest.mark.parametrize("max_hop_count", [CONFIG_HOP_COUNT, MAX_HOP_COUNT])
