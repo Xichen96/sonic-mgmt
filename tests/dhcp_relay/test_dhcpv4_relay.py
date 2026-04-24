@@ -556,6 +556,32 @@ def test_dhcp_relay_with_non_default_vrf(
         duthost.shell("sudo config save -y")
 
 
+def _wait_for_route_checker_ok(duthost, timeout=60, interval=5):
+    """Wait until route_check.py reports clean state on duthost.
+
+    During VRF bind/unbind, FRR's kernel-route install can fail (netlink ENODEV)
+    for routes whose nexthop interface temporarily left the default VRF. FRR
+    marks those routes installed=false / failed=true and does not retry after
+    VRF unbind, so monit's routeCheck reports them as failed in syslog and
+    loganalyzer fails the teardown. The teardown forces a hard BGP clear via
+    "sonic-clear ip bgp neighbor all" to trigger fresh RIB + kernel re-install,
+    then this helper blocks until route_check.py exits 0 (the same primitive
+    monit's routeCheck program runs) so that (a) no spurious teardown ERR, and
+    (b) the next test starts on a converged testbed. We poll route_check.py
+    directly rather than monit's cached status because monit only re-polls
+    "every 5 cycles" (~150s).
+    """
+    def _ok():
+        return duthost.shell("sudo /usr/local/bin/route_check.py",
+                             module_ignore_errors=True)["rc"] == 0
+
+    pytest_assert(
+        wait_until(timeout, interval, 0, _ok),
+        "route_check.py did not return clean on {} within {}s".format(
+            duthost.hostname, timeout),
+    )
+
+
 def test_dhcp_relay_with_different_non_default_vrf(
         ptfhost,
         dut_dhcp_relay_data,
@@ -758,6 +784,19 @@ def test_dhcp_relay_with_different_non_default_vrf(
         _restore_interface_ip_entries(duthost, saved_vlan_ips)
         _restore_interface_ip_entries(duthost, saved_pc_ips)
         duthost.shell("sudo config save -y")
+
+        # Force BGP to re-announce routes: VRF bind caused kernel-install
+        # failures (netlink ENODEV) for routes whose nexthop interface briefly
+        # left the default VRF. FRR does not retry these after VRF unbind, so
+        # the routes stay installed=false/failed=true forever (still in ASIC
+        # via fpmsyncd, but missing from kernel FIB). A hard BGP clear forces
+        # fresh RIB updates so zebra re-installs them into the kernel.
+        duthost.shell("sudo sonic-clear ip bgp neighbor all")
+
+        # Wait for FRR to reconverge after VRF unbind / IP restore so that
+        # monit's routeCheck no longer reports failed routes (otherwise loganalyzer
+        # picks up the transient ERR in syslog and fails this teardown).
+        _wait_for_route_checker_ok(duthost)
 
 
 @pytest.mark.parametrize("max_hop_count", [CONFIG_HOP_COUNT, MAX_HOP_COUNT])
