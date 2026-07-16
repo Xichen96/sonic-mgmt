@@ -76,6 +76,7 @@ pytestmark = [
 BROADCAST_MAC = 'ff:ff:ff:ff:ff:ff'
 DEFAULT_DHCP_CLIENT_PORT = 68
 SINGLE_TOR_MODE = 'single'
+DUAL_TOR_MODE = 'dual'
 CLIENT_VRF_NAME = "Vrf01"   # Global macro for Client VRF
 MAX_HOP_COUNT = 16
 CONFIG_HOP_COUNT = 2
@@ -526,24 +527,14 @@ def test_dhcp_relay_with_non_default_vrf(
     # the Loopback IP-strip / vrf bind / restore sequence still triggers the
     # cleanup in the finally block.
     try:
-        # Step 6: For the "source_intf" testcase only, rebind the
-        # source-interface Loopback into CLIENT_VRF_NAME.
+        # Step 6: Rebind the source-interface Loopback into CLIENT_VRF_NAME
+        # whenever the relay uses it.
         #
-        # SONiC orchagent installs the IP2ME (trap-to-CPU) route per-VRF
-        # (intfsorch.cpp::addIp2MeRoute is called with
-        # vr_id = port.m_vr_id). The "source_intf" testcase passes
-        # --source-interface Loopback0 to the relay, so dhcp4relay sets
-        # giaddr to the Loopback IP and the server unicasts the OFFER back
-        # to that IP. If Loopback0 stays in the default VRF while the
-        # ingress interface is in CLIENT_VRF_NAME, platforms whose silicon
-        # enforces strict per-VRF IP2ME (for example, Broadcom Helix4) have
-        # no matching trap entry in CLIENT_VRF_NAME and silently drop the
-        # OFFER. Rebinding the Loopback into CLIENT_VRF_NAME co-locates the
-        # trap route with the ingress VRF so the test passes uniformly
-        # across platforms. The other testcases (vrf_selection,
-        # server_id_override) do not use --source-interface, so no rebind
-        # is required.
-        if testcase == "source_intf":
+        # source_intf configures Loopback0 explicitly. Dual-ToR configures it
+        # implicitly for every testcase. The OFFER returns to the Loopback IP
+        # through CLIENT_VRF_NAME, so strict per-VRF IP2ME platforms require
+        # the Loopback trap route in that VRF.
+        if testcase == "source_intf" or testing_mode == DUAL_TOR_MODE:
             saved_loopback_ips = _save_interface_ip_entries(
                 duthost, "LOOPBACK_INTERFACE", loopback_for_src)
             for key in list(saved_loopback_ips.keys()):
