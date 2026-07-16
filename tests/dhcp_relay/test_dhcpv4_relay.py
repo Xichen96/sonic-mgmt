@@ -138,18 +138,19 @@ def frr_recovery_after_vrf_unbind(duthosts, rand_one_dut_hostname, loganalyzer):
     remove this fixture and its usages once that lands.
     """
     duthost = duthosts[rand_one_dut_hostname]
-    la = loganalyzer.get(duthost.hostname) if loganalyzer else None
 
     transient_ignores = [
         r".*ERR monit.*'routeCheck'.*",
         r".*ERR route_check.*Some routes have failed state in FRR.*",
         r".*ERR route_check.*Some routes are not set offloaded in FRR.*",
+        r".*ERR swss#tunnel_packet_handler.py: All portchannels failed to come up within 3 minutes, exiting.*",
     ]
 
-    saved_ignore = None
-    if la is not None:
-        saved_ignore = list(la.ignore_regex)
-        la.ignore_regex.extend(transient_ignores)
+    saved_ignores = {}
+    if loganalyzer:
+        for hostname, analyzer in loganalyzer.items():
+            saved_ignores[hostname] = list(analyzer.ignore_regex)
+            analyzer.ignore_regex.extend(transient_ignores)
 
     yield
 
@@ -167,8 +168,8 @@ def frr_recovery_after_vrf_unbind(duthosts, rand_one_dut_hostname, loganalyzer):
                 "route_check did not converge within 180s after VRF unbind "
                 "BGP shutdown/startup; continuing teardown anyway")
     finally:
-        if la is not None and saved_ignore is not None:
-            la.ignore_regex[:] = saved_ignore
+        for hostname, saved_ignore in saved_ignores.items():
+            loganalyzer[hostname].ignore_regex[:] = saved_ignore
 
 
 @pytest.fixture(autouse=True)
