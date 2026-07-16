@@ -341,7 +341,9 @@ def test_dhcp_relay_default(ptfhost, dut_dhcp_relay_data, validate_dut_routes_ex
         restart_dhcp_service(duthost)
         if testing_mode == DUAL_TOR_MODE:
             restart_dhcp_service(standby_duthost)
-            pytest_assert(wait_until(120, 5, 0, check_interface_status, standby_duthost, relay_agent))
+            # The sonic relay fixture configures only the selected ToR; standby remains on ISC.
+            pytest_assert(wait_until(120, 5, 0, check_interface_status,
+                                     standby_duthost, "isc-relay-agent"))
         pytest_assert(wait_until(120, 5, 0, check_interface_status, duthost, relay_agent))
 
 
@@ -462,7 +464,9 @@ def test_dhcp_relay_with_source_port_ip_in_relay_enabled(
         restart_dhcp_service(duthost)
         if testing_mode == DUAL_TOR_MODE:
             restart_dhcp_service(standby_duthost)
-            pytest_assert(wait_until(120, 5, 0, check_interface_status, standby_duthost, relay_agent))
+            # The sonic relay fixture configures only the selected ToR; standby remains on ISC.
+            pytest_assert(wait_until(120, 5, 0, check_interface_status,
+                                     standby_duthost, "isc-relay-agent"))
         pytest_assert(wait_until(120, 5, 0, check_interface_status, duthost, relay_agent))
 
 
