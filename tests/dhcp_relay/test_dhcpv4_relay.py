@@ -174,6 +174,7 @@ def frr_recovery_after_vrf_unbind(duthosts, rand_one_dut_hostname, loganalyzer):
 
 @pytest.fixture(autouse=True)
 def ignore_expected_loganalyzer_exceptions(
+        request,
         rand_one_dut_hostname,
         loganalyzer,
         enable_sonic_dhcpv4_relay_agent   # noqa: F811
@@ -187,6 +188,16 @@ def ignore_expected_loganalyzer_exceptions(
             r".*ERR kernel.*e1000.*Reset adapter.*"
         ]
         loganalyzer[rand_one_dut_hostname].ignore_regex.extend(ignoreRegex)
+
+        if "non_default_vrf" in request.node.name:
+            vrfIgnoreRegex = [
+                r".*ERR monit.*'routeCheck'.*",
+                r".*ERR route_check.*Some routes have failed state in FRR.*",
+                r".*ERR route_check.*Some routes are not set offloaded in FRR.*",
+                r".*ERR swss#tunnel_packet_handler.py: All portchannels failed to come up within 3 minutes, exiting.*",
+            ]
+            for analyzer in loganalyzer.values():
+                analyzer.ignore_regex.extend(vrfIgnoreRegex)
 
     yield
 
