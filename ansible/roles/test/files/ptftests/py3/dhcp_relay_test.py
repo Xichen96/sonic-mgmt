@@ -612,11 +612,10 @@ class DHCPTest(DataplaneBaseTest):
 
         giaddr = self.relay_iface_ip if not self.dual_tor else self.switch_loopback_ip
         siaddr = self.server_ip[0]
-        if self.relay_agent == "sonic-relay-agent":
-            if self.server_id_override:
-                giaddr = self.relay_iface_ip
-            elif (self.link_selection and self.source_interface):
-                giaddr = self.switch_loopback_ip
+        # Server-ID Override changes Option 82 SubOption 11, not giaddr.
+        if (self.relay_agent == "sonic-relay-agent"
+                and self.link_selection and self.source_interface):
+            giaddr = self.switch_loopback_ip
 
         bootp = scapy.BOOTP(op=2,
                             htype=1,
@@ -803,15 +802,13 @@ class DHCPTest(DataplaneBaseTest):
         return self.merge_layers_to_packet(ether, ip, udp, bootp)
 
     def create_dhcp_ack_packet(self):
-        if self.server_id_override:
-            ip_dst = self.relay_iface_ip
-            ip_gateway = self.relay_iface_ip
-        elif (self.link_selection and self.source_interface):
+        # Server-ID Override does not change the server reply destination or giaddr.
+        if (self.link_selection and self.source_interface) or self.dual_tor:
             ip_dst = self.switch_loopback_ip
             ip_gateway = self.switch_loopback_ip
         else:
-            ip_dst = self.relay_iface_ip if not self.dual_tor else self.switch_loopback_ip
-            ip_gateway = ip_dst
+            ip_dst = self.relay_iface_ip
+            ip_gateway = self.relay_iface_ip
 
         dhcp_ack_packet = testutils.dhcp_ack_packet(
                           eth_server=self.server_iface_mac,
