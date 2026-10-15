@@ -163,12 +163,7 @@
   register: arp_update_result
   until: arp_update_result.rc == 0
 
-- name: Setup broadcom based fanouts
-  block:
-    - name: reinit fp entries
-      shell: "bcmcmd 'fp detach' && bcmcmd 'fp init'"
-      become: yes
-  when: "'broadcom' in fanout_sonic_version.asic_type"
+- import_tasks: fanout_sonic_broadcom_fp.yml
 
 - block:
   - name: Remove ipv6 parameter
