@@ -132,6 +132,8 @@
   retries: 24
   delay: 15
 
+- import_tasks: fanout_sonic_broadcom_fp.yml
+
 - name: Shutdown arp_update process in swss (avoid fanout broadcasting it's MAC address)
   shell: docker exec -i swss supervisorctl stop arp_update
   become: yes
@@ -139,8 +141,6 @@
   delay: 30
   register: arp_update_result
   until: arp_update_result.rc == 0
-
-- import_tasks: fanout_sonic_broadcom_fp.yml
 
 - block:
   - name: Remove ipv6 parameter
