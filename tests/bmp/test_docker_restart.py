@@ -3,6 +3,7 @@ import logging
 
 from tests.common.utilities import wait_until
 from tests.common.helpers.assertions import pytest_assert
+from tests.common.helpers.memory_checker_restart import align_memory_checker_restart
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ def test_restart_bmp_docker(duthosts,
     asichost = duthost.asic_instance(enum_rand_one_frontend_asic_index)
 
     logger.info(duthost.shell(cmd="docker ps", module_ignore_errors=True)['stdout'])
+    align_memory_checker_restart(duthost, "bmp", 58)
     asichost.restart_service("bmp")
     logger.info(duthost.shell(cmd="docker ps", module_ignore_errors=True)['stdout'])
 

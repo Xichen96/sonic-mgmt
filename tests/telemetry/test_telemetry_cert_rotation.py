@@ -4,6 +4,7 @@ import pytest
 from tests.common.helpers.assertions import pytest_assert
 from tests.common.utilities import wait_until, wait_tcp_connection
 from tests.common.helpers.gnmi_utils import GNMIEnvironment
+from tests.common.helpers.memory_checker_restart import align_memory_checker_restart
 from telemetry_utils import generate_client_cli
 from telemetry_utils import archive_telemetry_certs, unarchive_telemetry_certs, rotate_telemetry_certs
 from telemetry_utils import execute_ptf_gnmi_cli
@@ -39,6 +40,7 @@ def test_telemetry_not_exit(duthosts, enum_rand_one_per_hwsku_hostname, setup_st
 
     duthost = duthosts[enum_rand_one_per_hwsku_hostname]
     env = GNMIEnvironment(duthost, GNMIEnvironment.TELEMETRY_MODE)
+    align_memory_checker_restart(duthost, env.gnmi_container, 56)
 
     # Shutting down telemetry
     duthost.service(name=env.gnmi_container, state="stopped")
