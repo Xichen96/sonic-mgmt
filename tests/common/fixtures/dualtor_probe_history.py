@@ -7,9 +7,11 @@ from contextlib import ExitStack
 
 import pytest
 
+from ansible.errors import AnsibleConnectionFailure
+from tests.common.errors import RunAnsibleModuleFail
 from tests.common.helpers.assertions import pytest_assert as assert_condition
 from tests.common.utilities import wait_until
-from tests.dualtor_mgmt.test_probe_backoff_diagnostic import start_capture, stop_collect_capture
+from tests.dualtor_mgmt.test_probe_backoff_diagnostic import snapshot, start_capture, stop_collect_capture
 
 
 logger = logging.getLogger(__name__)
@@ -19,6 +21,37 @@ MODULES = (
     "dualtor_mgmt/test_server_failure.py",
 )
 MARKER = "/tmp/dualtor-probe-history-08f7a1e3.json"
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if report.when != "call" or not report.failed or MODULES[-1] not in str(item.path):
+        return
+    fixtures = item.funcargs
+    try:
+        snapshot("original_failure_before_teardown", [fixtures["duthosts"][0], fixtures["duthosts"][1]])
+        ptf = fixtures["ptfhost"]
+        commands = [
+            "supervisorctl status icmp_responder",
+            "cat /tmp/icmp_responder.err.log",
+            "ip -details link show",
+            "ss -0 -a -p",
+        ]
+        result = ptf.shell_cmds(cmds=commands, timeout=10, continue_on_fail=True, module_ignore_errors=True)
+        logger.warning("PROBE_HISTORY failure_ptf=%s", result)
+        group = shlex.quote(fixtures["tbinfo"]["group-name"])
+        command = (
+            'vmset={}; bridges="$(timeout 10 ovs-vsctl list-br)" || exit $?; '
+            'for bridge in $bridges; do case "$bridge" in "mbr-$vmset-"*) '
+            'echo "$bridge"; timeout 10 ovs-ofctl --names dump-flows "$bridge"; '
+            'status=$?; if [ "$status" -ne 0 ]; then exit "$status"; fi;; esac; done'
+        ).format(group)
+        logger.warning("PROBE_HISTORY failure_ovs=%s",
+                       fixtures["vmhost"].shell(command, module_ignore_errors=True))
+    except (RunAnsibleModuleFail, AnsibleConnectionFailure):
+        logger.exception("PROBE_HISTORY failure-stage diagnostic read failed; original test failure is preserved")
 
 
 def start_syslog(host, token):
