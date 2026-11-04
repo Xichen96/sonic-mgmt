@@ -30,7 +30,23 @@ def start_syslog(host, token):
     return {"kind": "syslog", "host": host.hostname, "path": path, "pid": pid}
 
 
-def stop_collect_syslog(host, resource, destination):
+def start_ptf_observer(host, token, label, command):
+    path = "/tmp/{}-{}-{}.log".format(token, host.hostname, label)
+    command = "nohup timeout 1800 {} > {} 2> {}.err < /dev/null & echo $!".format(
+        command, shlex.quote(path), shlex.quote(path))
+    pid = int(host.shell(command)["stdout"].strip())
+
+    def alive():
+        return host.shell("kill -0 {}".format(pid), module_ignore_errors=True)["rc"] == 0
+
+    if not wait_until(3, 1, 1, alive):
+        logger.error("PROBE_HISTORY observer_start_failed label=%s result=%s", label,
+                     host.shell("cat " + shlex.quote(path) + ".err", module_ignore_errors=True))
+        pytest.fail("Passive PTF observer did not start: " + label)
+    return {"kind": "ptf-" + label, "host": host.hostname, "path": path, "pid": pid}
+
+
+def stop_collect_text(host, resource, destination):
     path, pid = resource["path"], resource["pid"]
     result = host.shell("kill -TERM {}".format(pid), module_ignore_errors=True)
     logger.info("PROBE_HISTORY stop_syslog host=%s result=%s", host.hostname, result)
@@ -39,10 +55,16 @@ def stop_collect_syslog(host, resource, destination):
         return host.shell("kill -0 {}".format(pid), module_ignore_errors=True)["rc"] != 0
 
     assert_condition(wait_until(10, 1, 0, stopped), "Passive syslog capture did not stop")
-    command = (
-        "awk '/linkmgrd/ && (/Ethernet36/ || /interval_v4/ || /reset heartbeat/)' {} | tail -n 2000"
-    ).format(shlex.quote(path))
-    logger.info("PROBE_HISTORY syslog host=%s result=%s", host.hostname, host.shell(command))
+    if resource["kind"] == "syslog":
+        command = (
+            "awk '/linkmgrd/ && (/Ethernet36/ || /interval_v4/ || /reset heartbeat/)' {} | tail -n 2000"
+        ).format(shlex.quote(path))
+    else:
+        command = "tail -n 2000 " + shlex.quote(path)
+    logger.info("PROBE_HISTORY text kind=%s host=%s result=%s",
+                resource["kind"], host.hostname, host.shell(command))
+    logger.info("PROBE_HISTORY monitor_stderr kind=%s host=%s result=%s",
+                resource["kind"], host.hostname, host.shell("cat " + shlex.quote(path) + ".err"))
     for suffix in ("", ".err"):
         host.fetch(src=path + suffix, dest=destination + os.sep, flat=True)
         host.file(path=path + suffix, state="absent")
@@ -58,7 +80,7 @@ def harvest(resources, token, duthosts, ptfhost):
             if resource["kind"] == "pcap":
                 cleanup.callback(stop_collect_capture, host, (resource["path"], resource["pid"]), destination)
             else:
-                cleanup.callback(stop_collect_syslog, host, resource, destination)
+                cleanup.callback(stop_collect_text, host, resource, destination)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -84,6 +106,9 @@ def capture_original_dualtor_history(request, duthosts, ptfhost, tbinfo):
         if not exists:
             for host in duthosts:
                 state["resources"].append(start_syslog(host, token))
+            state["resources"].append(start_ptf_observer(ptfhost, token, "links", "ip -ts monitor link"))
+            state["resources"].append(start_ptf_observer(
+                ptfhost, token, "stderr", "tail -n 0 -F /tmp/icmp_responder.err.log"))
             for host, interface in [(duthosts[0], "Ethernet36"), (duthosts[1], "Ethernet36"), (ptfhost, "any")]:
                 path, pid = start_capture(host, interface, token, server_ip)
                 state["resources"].append({"kind": "pcap", "host": host.hostname, "path": path, "pid": pid})
