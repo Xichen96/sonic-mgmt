@@ -7,7 +7,7 @@ from contextlib import ExitStack
 
 import pytest
 
-from tests.common.helpers.assertions import pytest_assert
+from tests.common.helpers.assertions import pytest_assert as assert_condition
 from tests.common.utilities import wait_until
 from tests.dualtor_mgmt.test_probe_backoff_diagnostic import start_capture, stop_collect_capture
 
@@ -25,8 +25,8 @@ def start_syslog(host, token):
     path = "/tmp/{}-{}.syslog".format(token, host.hostname)
     command = "nohup timeout 1800 tail -n 0 -F /var/log/syslog > {} 2> {}.err < /dev/null & echo $!"
     pid = int(host.shell(command.format(shlex.quote(path), shlex.quote(path)))["stdout"].strip())
-    pytest_assert(host.shell("kill -0 {}".format(pid), module_ignore_errors=True)["rc"] == 0,
-                  "Passive syslog capture did not start")
+    assert_condition(host.shell("kill -0 {}".format(pid), module_ignore_errors=True)["rc"] == 0,
+                     "Passive syslog capture did not start")
     return {"kind": "syslog", "host": host.hostname, "path": path, "pid": pid}
 
 
@@ -38,7 +38,7 @@ def stop_collect_syslog(host, resource, destination):
     def stopped():
         return host.shell("kill -0 {}".format(pid), module_ignore_errors=True)["rc"] != 0
 
-    pytest_assert(wait_until(10, 1, 0, stopped), "Passive syslog capture did not stop")
+    assert_condition(wait_until(10, 1, 0, stopped), "Passive syslog capture did not stop")
     command = (
         "awk '/linkmgrd/ && (/Ethernet36/ || /interval_v4/ || /reset heartbeat/)' {} | tail -n 2000"
     ).format(shlex.quote(path))
@@ -69,12 +69,12 @@ def capture_original_dualtor_history(request, duthosts, ptfhost, tbinfo):
         return
     exists = ptfhost.stat(path=MARKER)["stat"]["exists"]
     if exists:
-        pytest_assert(module != MODULES[0], "Unexpected capture marker from a previous sequence")
+        assert_condition(module != MODULES[0], "Unexpected capture marker from a previous sequence")
         state = json.loads(ptfhost.shell("cat " + MARKER)["stdout"])
-        pytest_assert(state["last_module"] == MODULES[MODULES.index(module) - 1],
-                      "Diagnostic modules did not execute in the original order")
+        assert_condition(state["last_module"] == MODULES[MODULES.index(module) - 1],
+                         "Diagnostic modules did not execute in the original order")
     else:
-        pytest_assert(module == MODULES[0], "Original-sequence capture marker is missing")
+        assert_condition(module == MODULES[0], "Original-sequence capture marker is missing")
         token = "probe-history-" + uuid.uuid4().hex[:12]
         config = json.loads(duthosts[0].shell("show mux config --json")["stdout"])
         server_ip = config["MUX_CABLE"]["PORTS"]["Ethernet36"]["SERVER"]["IPv4"].split("/")[0]
