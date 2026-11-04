@@ -77,7 +77,7 @@ def restore_probe_state(hosts, ptfhost, ports):
 def start_capture(host, interface, token, server_ip):
     path = "/tmp/{}-{}.pcap".format(token, host.hostname)
     command = (
-        "nohup timeout 1200 tcpdump -U -n -s 256 -i {} {} -w {}"
+        "nohup timeout 1800 tcpdump -U -n -s 256 -i {} {} -w {}"
         " > {}.log 2>&1 < /dev/null & echo $!"
     ).format(shlex.quote(interface), shlex.quote("icmp and host 10.1.0.36 and host " + server_ip),
              shlex.quote(path), shlex.quote(path))
