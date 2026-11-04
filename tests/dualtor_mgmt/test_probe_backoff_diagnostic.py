@@ -74,12 +74,13 @@ def restore_probe_state(hosts, ptfhost, ports):
     pytest_assert(wait_until(120, 3, 0, ready, hosts[0], hosts[1]), "Diagnostic restoration did not recover mux health")
 
 
-def start_capture(host, interface, token):
+def start_capture(host, interface, token, server_ip):
     path = "/tmp/{}-{}.pcap".format(token, host.hostname)
     command = (
-        "nohup timeout 1200 tcpdump -U -n -s 256 -i {} 'icmp and host 10.1.0.36' -w {}"
+        "nohup timeout 1200 tcpdump -U -n -s 256 -i {} {} -w {}"
         " > {}.log 2>&1 < /dev/null & echo $!"
-    ).format(shlex.quote(interface), shlex.quote(path), shlex.quote(path))
+    ).format(shlex.quote(interface), shlex.quote("icmp and host 10.1.0.36 and host " + server_ip),
+             shlex.quote(path), shlex.quote(path))
     pid = int(host.shell(command)["stdout"].strip())
 
     def listening():
@@ -119,20 +120,20 @@ def stop_collect_capture(host, capture, destination):
 
 
 @pytest.mark.dualtor_active_standby_toggle_to_upper_tor
-def test_original_responder_gap(upper_tor_host, lower_tor_host, ptfhost, tbinfo):  # noqa: F811
+def test_original_responder_gap(upper_tor_host, lower_tor_host, ptfhost):  # noqa: F811
     hosts = [upper_tor_host, lower_tor_host]
-    ports = list(mux_status(hosts[0]))
     pytest_assert(wait_until(120, 3, 0, ready, *hosts), "Diagnostic baseline is not healthy")
+    ports = list(mux_status(hosts[0]))
     token = "backoff-diag-" + uuid.uuid4().hex[:12]
     destination = os.path.join("logs", "dualtor_mgmt", token)
     os.makedirs(destination)
-    ptf_index = hosts[0].get_extended_minigraph_facts(tbinfo)["minigraph_ptf_indices"]["Ethernet36"]
+    config = json.loads(hosts[0].shell("show mux config --json")["stdout"])
+    server_ip = config["MUX_CABLE"]["PORTS"]["Ethernet36"]["SERVER"]["IPv4"].split("/")[0]
 
     with ExitStack() as cleanup:
         cleanup.callback(restore_probe_state, hosts, ptfhost, ports)
-        for host, interface in [(hosts[0], "Ethernet36"), (hosts[1], "Ethernet36"),
-                                (ptfhost, "eth{}".format(ptf_index))]:
-            capture = start_capture(host, interface, token)
+        for host, interface in [(hosts[0], "Ethernet36"), (hosts[1], "Ethernet36"), (ptfhost, "any")]:
+            capture = start_capture(host, interface, token, server_ip)
             cleanup.callback(stop_collect_capture, host, capture, destination)
 
         snapshot("healthy_baseline", hosts)
