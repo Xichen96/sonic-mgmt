@@ -43,9 +43,8 @@ def snapshot(label, hosts):
             'sonic-db-cli STATE_DB HGETALL "PORT_TABLE|Ethernet36"',
             "sonic-db-cli APPL_DB HGETALL MUX_CABLE_RESPONSE_TABLE:Ethernet36",
             "docker exec mux supervisorctl status linkmgrd",
-            "docker exec teamd supervisorctl status",
+            "docker exec teamd supervisorctl status teammgrd teamsyncd tlm_teamd",
             "docker exec pmon supervisorctl status ycabled",
-            "tail -n 1000 /var/log/mux.log",
             "tail -n 1000 /var/log/syslog",
         ]
         result = host.shell_cmds(cmds=commands, timeout=15, continue_on_fail=True)
