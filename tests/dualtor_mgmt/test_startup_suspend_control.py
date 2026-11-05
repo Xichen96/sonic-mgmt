@@ -86,6 +86,7 @@ def enter_original_pmon_recovery(duthosts, ptfhost, tbinfo, request, ports, host
             hosts[0].shell("docker rm pmon")
     finally:
         if pmon_stopping:
+            hosts[0].shell("systemctl reset-failed pmon.service")
             hosts[0].shell("systemctl start pmon.service")
             pytest_assert(wait_until(60, 5, 0, check_container_state, hosts[0], "pmon", True),
                           "Upper PMON did not return after recreation")
