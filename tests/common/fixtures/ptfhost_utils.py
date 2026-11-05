@@ -466,6 +466,9 @@ def run_icmp_responder(duthosts, rand_one_dut_hostname, ptfhost, tbinfo, request
     )
     ptfhost.shell("supervisorctl update")
     ptfhost.shell("supervisorctl start icmp_responder")
+    if "dualtor" in tbinfo["topo"]["name"]:
+        # Resume probes suspended while the module-scoped responder was stopped.
+        duthosts.shell("config muxcable reset-heartbeat-suspend all")
 
     yield
 
