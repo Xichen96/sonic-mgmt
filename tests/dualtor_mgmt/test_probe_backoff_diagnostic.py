@@ -45,7 +45,8 @@ def snapshot(label, hosts):
             "docker exec mux supervisorctl status linkmgrd",
             "docker exec teamd supervisorctl status teammgrd teamsyncd tlm_teamd",
             "docker exec pmon supervisorctl status ycabled",
-            "tail -n 1000 /var/log/syslog",
+            "awk '$7 == \"mux#linkmgrd:\" && (/Ethernet36:/ || /interval_v4/ || /reset_suspend_timer/)' "
+            "/var/log/syslog | tail -n 200",
         ]
         result = host.shell_cmds(cmds=commands, timeout=15, continue_on_fail=True)
         logger.info("BACKOFF_DIAG snapshot=%s host=%s result=%s", label, host.hostname,
@@ -106,7 +107,7 @@ def stop_collect_capture(host, capture, destination):
 
     pytest_assert(wait_until(10, 1, 0, stopped), "Capture process did not stop on {}".format(host.hostname))
     decode = (
-        "tcpdump -tt -nn -r {p} > {p}.txt 2> {p}.decode.err; result=$?; "
+        "tcpdump -tt -nn -e -r {p} > {p}.txt 2> {p}.decode.err; result=$?; "
         "cat {p}.decode.err; if [ \"$result\" -ne 0 ]; then exit \"$result\"; fi; "
         "awk '{{b=int($1/5)*5; if ($0 ~ /echo request/) req[b]++; "
         "if ($0 ~ /echo reply/) rep[b]++; all[b]++}} "

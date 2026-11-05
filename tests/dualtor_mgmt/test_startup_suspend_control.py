@@ -12,7 +12,6 @@ import pytest
 
 from tests.common.dualtor import mux_simulator_control as mux_control
 from tests.common.dualtor.dual_tor_common import CableType
-from tests.common.dualtor.mux_simulator_control import simulator_flap_counter, simulator_server_down  # noqa: F401
 from tests.common.fixtures import dualtor_probe_history as history
 from tests.common.fixtures import ptfhost_utils
 from tests.common.fixtures.ptfhost_utils import run_garp_service  # noqa: F401
@@ -31,6 +30,22 @@ EVENT = re.compile(
     r"^(\d{4} [A-Za-z]{3}\s+\d{1,2} [\d:.]+) \S+ \S+ mux#linkmgrd:.*"
     r"Ethernet36: (suspend ICMP heartbeat probing|suspend timeout)"
 )
+
+
+class StartupPrerequisiteReached(Exception):
+    pass
+
+
+def stop_before_server_fault(interface):
+    """Observe the original healthy prerequisite without injecting a server fault."""
+    raise StartupPrerequisiteReached("startup prerequisite passed for " + interface)
+
+
+def responder_snapshot(label, ptfhost):
+    result = ptfhost.shell_cmds(cmds=[
+        "supervisorctl status icmp_responder", "ss -0 -a -p", "ip -j link show",
+    ], timeout=10, continue_on_fail=False)
+    logger.info("SUSPEND_CONTROL responder_snapshot=%s result=%s", label, json.dumps(result, default=str))
 
 
 @contextmanager
@@ -65,6 +80,7 @@ def enter_original_pmon_recovery(duthosts, ptfhost, tbinfo, request, ports, host
     try:
         with responder_fixture(duthosts, ptfhost, tbinfo, request, ports):
             restore_probe_state(hosts, ptfhost, ports)
+            snapshot("healthy_before_pmon_recreation", hosts)
             pmon_stopping = True
             hosts[0].shell("systemctl stop pmon.service")
             hosts[0].shell("docker rm pmon")
@@ -110,9 +126,9 @@ def next_suspend(host, path, previous):
 
 
 @pytest.mark.dualtor_active_standby_toggle_to_upper_tor
+@pytest.mark.parametrize("expect_recovery", [False, True], ids=["control", "fixed"])
 def test_original_startup_after_observed_suspend(
-        duthosts, ptfhost, tbinfo, request, mux_server_url, vmhost,
-        simulator_flap_counter, simulator_server_down):  # noqa: F811
+        duthosts, ptfhost, tbinfo, request, mux_server_url, vmhost, expect_recovery):
     hosts = [duthosts[0], duthosts[1]]
     ports = list(mux_status(hosts[0]))
     pytest_assert(len(ports) == 24, "This diagnostic requires the original 24-port dualtor shape")
@@ -149,10 +165,20 @@ def test_original_startup_after_observed_suspend(
             mux_control._toggle_all_simulator_ports_to_target_dut(
                 hosts[0].hostname, duthosts, mux_server_url, tbinfo, vmhost)
             snapshot("original_fixture_started", hosts)
-            with pytest.raises(pytest.fail.Exception, match="Test can't proceed") as failure:
+            responder_snapshot("original_fixture_started", ptfhost)
+            outcome = StartupPrerequisiteReached if expect_recovery else pytest.fail.Exception
+            message = "startup prerequisite passed" if expect_recovery else "Test can't proceed"
+            with pytest.raises(outcome, match=message) as failure:
                 original_case.test_server_down(
                     CableType.active_standby, duthosts, tbinfo, [], ports,
-                    simulator_flap_counter, simulator_server_down, None, None, hosts[0], hosts[1], None)
+                    stop_before_server_fault, None, None, None, hosts[0], hosts[1], None)
+            if expect_recovery:
+                pytest_assert(wait_until(30, 1, 0, ready, *hosts),
+                              "Fixed responder startup did not restore all mux ports")
+                snapshot("fixed_startup_recovery", hosts)
+                responder_snapshot("fixed_startup_recovery", ptfhost)
+                logger.info("SUSPEND_CONTROL fixed_prerequisite=True all_ports_healthy=True")
+                return
             logger.warning("SUSPEND_CONTROL original_failure=%s", failure.getrepr(style="short"))
             observed = [mux_status(host) for host in hosts]
             pytest_assert(
@@ -160,7 +186,9 @@ def test_original_startup_after_observed_suspend(
                 and all(p["STATUS"] == "standby" and p["HEALTH"] == "unhealthy" for p in observed[1].values()),
                 "The failure did not preserve the original all-port mux-health signature")
             snapshot("accepted_original_failure", hosts)
+            responder_snapshot("accepted_original_failure", ptfhost)
             duthosts.shell("config muxcable reset-heartbeat-suspend all")
             pytest_assert(wait_until(30, 1, 0, ready, *hosts), "Heartbeat reset alone did not recover the failure")
             snapshot("reset_only_recovery", hosts)
+            responder_snapshot("reset_only_recovery", ptfhost)
             logger.info("SUSPEND_CONTROL accepted_failure=True reset_only_recovery=True")
