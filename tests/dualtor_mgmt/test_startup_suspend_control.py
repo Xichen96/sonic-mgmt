@@ -174,7 +174,7 @@ def test_original_startup_after_observed_suspend(
                     stop_before_server_fault, None, None, None, hosts[0], hosts[1], None)
             if expect_recovery:
                 pytest_assert(wait_until(30, 1, 0, ready, *hosts),
-                              "Fixed responder startup did not restore all mux ports")
+                              "Fixed prerequisite recovery did not restore all mux ports")
                 snapshot("fixed_startup_recovery", hosts)
                 responder_snapshot("fixed_startup_recovery", ptfhost)
                 logger.info("SUSPEND_CONTROL fixed_prerequisite=True all_ports_healthy=True")
@@ -187,8 +187,13 @@ def test_original_startup_after_observed_suspend(
                 "The failure did not preserve the original all-port mux-health signature")
             snapshot("accepted_original_failure", hosts)
             responder_snapshot("accepted_original_failure", ptfhost)
-            duthosts.shell("config muxcable reset-heartbeat-suspend all")
-            pytest_assert(wait_until(30, 1, 0, ready, *hosts), "Heartbeat reset alone did not recover the failure")
+
+            def reset_and_observe():
+                duthosts.shell("config muxcable reset-heartbeat-suspend all")
+                return ready(*hosts)
+
+            pytest_assert(wait_until(30, 1, 0, reset_and_observe),
+                          "Heartbeat reset requests alone did not recover the failure")
             snapshot("reset_only_recovery", hosts)
             responder_snapshot("reset_only_recovery", ptfhost)
             logger.info("SUSPEND_CONTROL accepted_failure=True reset_only_recovery=True")
