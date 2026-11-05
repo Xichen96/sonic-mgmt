@@ -42,6 +42,10 @@ def test_server_down(cable_type, duthosts, tbinfo, active_active_ports, active_s
     """
     def upper_tor_mux_state_verification(state, health):
         mux_state_upper_tor = show_muxcable_status(upper_tor_host)
+        if (cable_type == CableType.active_standby and health == 'healthy' and
+                mux_state_upper_tor[test_iface]['health'] != 'healthy'):
+            # A successful CLI write does not acknowledge linkmgrd consumption.
+            upper_tor_host.shell("config muxcable reset-heartbeat-suspend all")
         return (mux_state_upper_tor[test_iface]['status'] == state and
                 mux_state_upper_tor[test_iface]['health'] == health)
 
