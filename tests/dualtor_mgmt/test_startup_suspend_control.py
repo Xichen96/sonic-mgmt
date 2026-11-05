@@ -17,6 +17,7 @@ from tests.common.fixtures import dualtor_probe_history as history
 from tests.common.fixtures import ptfhost_utils
 from tests.common.fixtures.ptfhost_utils import run_garp_service  # noqa: F401
 from tests.common.helpers.assertions import pytest_assert
+from tests.common.helpers.dut_utils import check_container_state
 from tests.common.utilities import wait_until
 from tests.dualtor_mgmt import test_server_failure as original_case
 from tests.dualtor_mgmt.test_probe_backoff_diagnostic import (
@@ -57,6 +58,21 @@ def canonical_restore(hosts, ptfhost, ports):
     ptfhost.shell("supervisorctl stop icmp_responder")
     for host in hosts:
         host.shell('sonic-db-cli CONFIG_DB DEL "MUX_LINKMGR|LINK_PROBER"')
+
+
+def enter_original_pmon_recovery(duthosts, ptfhost, tbinfo, request, ports, hosts):
+    pmon_stopping = False
+    try:
+        with responder_fixture(duthosts, ptfhost, tbinfo, request, ports):
+            restore_probe_state(hosts, ptfhost, ports)
+            pmon_stopping = True
+            hosts[0].shell("systemctl stop pmon.service")
+            hosts[0].shell("docker rm pmon")
+    finally:
+        if pmon_stopping:
+            hosts[0].shell("systemctl start pmon.service")
+            pytest_assert(wait_until(60, 5, 0, check_container_state, hosts[0], "pmon", True),
+                          "Upper PMON did not return after recreation")
 
 
 def suspend_events(host, path):
@@ -118,13 +134,10 @@ def test_original_startup_after_observed_suspend(
         status = ptfhost.shell("supervisorctl status icmp_responder", module_ignore_errors=True)
         if "RUNNING" in status["stdout"]:
             ptfhost.shell("supervisorctl stop icmp_responder")
-        with responder_fixture(duthosts, ptfhost, tbinfo, request, ports):
-            restore_probe_state(hosts, ptfhost, ports)
-
-        # Enter the same observed Unknown/Active/Up loop through its documented cold-start entry.
+        # Preserve warm linkmgrd, with PMON initialization occurring after responder teardown.
+        enter_original_pmon_recovery(duthosts, ptfhost, tbinfo, request, ports, hosts)
         mux_control._toggle_all_simulator_ports_to_target_dut(
             hosts[0].hostname, duthosts, mux_server_url, tbinfo, vmhost)
-        duthosts.shell("docker exec mux supervisorctl restart linkmgrd")
         state = {}
         pytest_assert(wait_until(180, 1, 0, maximum_backoff, hosts[0], logs[0]["path"], state),
                       "The observed exponential suspension path was not reached")
