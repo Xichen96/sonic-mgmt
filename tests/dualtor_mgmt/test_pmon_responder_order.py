@@ -36,7 +36,7 @@ def stop_before_server_fault(interface):
     raise StartupPrerequisiteReached("startup prerequisite passed for " + interface)
 
 
-def observe(label, hosts):
+def observe(label, hosts, pmon_absent_host=None):
     commands = [
         'sonic-db-cli APPL_DB HGETALL "MUX_CABLE_TABLE:Ethernet36"',
         'sonic-db-cli STATE_DB HGETALL "MUX_CABLE_TABLE|Ethernet36"',
@@ -49,8 +49,15 @@ def observe(label, hosts):
         'docker exec pmon supervisorctl status ycabled',
     ]
     for host in hosts:
-        result = host.shell_cmds(cmds=commands, timeout=15, continue_on_fail=True)
+        result = host.shell_cmds(
+            cmds=commands, timeout=15, continue_on_fail=True, module_ignore_errors=True)
         logger.info("PMON_ORDER observation=%s host=%s result=%s", label, host.hostname, json.dumps(dict(result)))
+        for command_result in result["results"]:
+            expected_absence = host is pmon_absent_host and command_result["cmd"] == commands[-1]
+            valid = ((command_result["rc"] == 1 and "No such container: pmon" in command_result["stderr"])
+                     if expected_absence else command_result["rc"] == 0)
+            pytest_assert(valid, "Unexpected observation result on {}: {}".format(
+                host.hostname, json.dumps(command_result)))
 
 
 def mark(hosts, token, phase):
@@ -146,7 +153,7 @@ def test_ordered_recovery(duthosts, ptfhost, tbinfo, request, mux_server_url, vm
                 lambda: hosts[1].shell(
                     'sonic-db-cli STATE_DB HGET "MUX_CABLE_TABLE|Ethernet36" state')["stdout"] == "active"),
                 "Peer takeover was not observed while upper PMON was absent")
-            observe("peer-active-before-pmon-start", hosts)
+            observe("peer-active-before-pmon-start", hosts, pmon_absent_host=hosts[0])
             start_pmon(hosts[0], require_ycabled=False)
             mark(hosts, token, "late_pmon_started")
         remaining = 180 - (time.monotonic() - offline_start)
