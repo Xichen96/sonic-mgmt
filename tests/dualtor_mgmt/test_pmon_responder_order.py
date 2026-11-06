@@ -50,7 +50,7 @@ def observe(label, hosts):
     ]
     for host in hosts:
         result = host.shell_cmds(cmds=commands, timeout=15, continue_on_fail=True)
-        logger.info("PMON_ORDER observation=%s host=%s result=%s", label, host.hostname, json.dumps(result))
+        logger.info("PMON_ORDER observation=%s host=%s result=%s", label, host.hostname, json.dumps(dict(result)))
 
 
 def mark(hosts, token, phase):
@@ -69,7 +69,7 @@ def collect_history(host, resource, destination):
         "awk '/pmon_order/ || /interval_v4/ || "
         "(/Ethernet36/ && (/mux#linkmgrd/ || /pmon#/ || /swss#orchagent/))' {} | tail -n 1800"
     ).format(shlex.quote(path))
-    logger.info("PMON_ORDER history host=%s result=%s", host.hostname, json.dumps(host.shell(command)))
+    logger.info("PMON_ORDER history host=%s result=%s", host.hostname, json.dumps(dict(host.shell(command))))
     for suffix in ("", ".err"):
         host.fetch(src=path + suffix, dest=destination + os.sep, flat=True)
         host.file(path=path + suffix, state="absent")
