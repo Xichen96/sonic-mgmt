@@ -152,5 +152,7 @@ def capture_original_dualtor_history(request, duthosts, ptfhost, tbinfo):
     logger.info("PROBE_HISTORY module_start=%s token=%s", module, state["token"])
     yield
     logger.info("PROBE_HISTORY module_end=%s failed=%s", module, request.session.testsfailed)
-    if module == MODULES[-1] or request.session.testsfailed:
+    # Cleanup-only campaigns have no following module to harvest their captures.
+    if (os.environ.get("SONIC_DUALTOR_HISTORY_CLEANUP_ONLY") == "1" or
+            module == MODULES[-1] or request.session.testsfailed):
         harvest(state["resources"], state["token"], duthosts, ptfhost)
