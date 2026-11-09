@@ -2,6 +2,7 @@ import argparse
 import json
 import socket
 import struct
+import sys
 import time
 
 
@@ -77,7 +78,6 @@ def matches_reply(frame, request):
     request_start, request_end = icmp_bounds(request)
     return (
         frame[start] == 0 and frame[start + 1] == 0
-        and frame[:6] == request[6:12] and frame[6:12] == request[:6]
         and frame[26:30] == request[30:34] and frame[30:34] == request[26:30]
         and frame[start + 4:start + 8] == request[request_start + 4:request_start + 8]
         and frame[start + 8:end] == request[request_start + 8:request_end]
@@ -96,18 +96,33 @@ def main():
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
     request = make_probe(args.capture, args.source_mac, args.nonce)
-    with socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0800)) as channel:
+    with socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3)) as channel:
         channel.bind((args.interface, 0))
         sent = time.time()
         if channel.send(request) != len(request):
             raise RuntimeError("Diagnostic frame was not completely sent")
+        print(json.dumps({"event": "readiness_request", "nonce": args.nonce, "request_hex": request.hex()}),
+              file=sys.stderr, flush=True)
         deadline = time.monotonic() + args.timeout
+        received = candidates = 0
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("No matching ignored-health diagnostic echo reply")
             channel.settimeout(remaining)
-            frame = channel.recv(65535)
+            try:
+                frame, address = channel.recvfrom(65535)
+            except socket.timeout as error:
+                raise TimeoutError("No matching diagnostic reply; received {} frames, {} candidates".format(
+                    received, candidates)) from error
+            received += 1
+            bounds = icmp_bounds(frame)
+            if (bounds and frame[bounds[0]] == 0 and frame[26:34] == request[30:34] + request[26:30]
+                    and frame[bounds[0] + 4:bounds[0] + 8] == request[38:42]):
+                candidates += 1
+                if candidates <= 3:
+                    print(json.dumps({"event": "readiness_candidate", "packet_type": address[2],
+                                      "reply_hex": frame.hex()}), file=sys.stderr, flush=True)
             if matches_reply(frame, request):
                 print(json.dumps({"reply_received": True, "nonce": args.nonce,
                                   "tx_epoch": sent, "rx_epoch": time.time(),
