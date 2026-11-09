@@ -54,10 +54,10 @@ def pytest_runtest_makereport(item, call):
         logger.exception("PROBE_HISTORY failure-stage diagnostic read failed; original test failure is preserved")
 
 
-def start_syslog(host, token):
+def start_syslog(host, token, timeout=1800):
     path = "/tmp/{}-{}.syslog".format(token, host.hostname)
-    command = "nohup timeout 1800 tail -n 0 -F /var/log/syslog > {} 2> {}.err < /dev/null & echo $!"
-    pid = int(host.shell(command.format(shlex.quote(path), shlex.quote(path)))["stdout"].strip())
+    command = "nohup timeout {} tail -n 0 -F /var/log/syslog > {} 2> {}.err < /dev/null & echo $!"
+    pid = int(host.shell(command.format(timeout, shlex.quote(path), shlex.quote(path)))["stdout"].strip())
     assert_condition(host.shell("kill -0 {}".format(pid), module_ignore_errors=True)["rc"] == 0,
                      "Passive syslog capture did not start")
     return {"kind": "syslog", "host": host.hostname, "path": path, "pid": pid}

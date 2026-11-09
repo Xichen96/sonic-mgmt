@@ -3,6 +3,8 @@ import logging
 import shlex
 import time
 import uuid
+from functools import partial
+from pathlib import Path
 
 import pytest
 
@@ -45,6 +47,28 @@ def service_identities(hosts):
     return identities
 
 
+def verify_responder_readiness(host, capture_path, token):
+    source = Path(__file__).resolve().parents[1] / "scripts" / "dualtor_readiness_probe.py"
+    destination = "/tmp/xichenlin-{}-readiness.py".format(token)
+    nonce = int(uuid.uuid4().hex[:16], 16)
+    links = json.loads(host.shell("ip -j link show")["stdout"])
+    addresses = {link["address"] for link in links if len(link.get("address", "").split(":")) == 6}
+    addresses.add(host.facts["router_mac"])
+    mac_arguments = " ".join("--source-mac " + shlex.quote(mac) for mac in sorted(addresses))
+    host.copy(src=str(source), dest=destination)
+    try:
+        command = "sudo python3 {} --capture {} {} --interface Ethernet36 --nonce {} --timeout 15"
+        result = host.shell(command.format(
+            shlex.quote(destination), shlex.quote(capture_path),
+            mac_arguments, nonce))
+        evidence = json.loads(result["stdout"])
+        pytest_assert(evidence["nonce"] == nonce and evidence["reply_received"] is True,
+                      "Diagnostic echo readiness was not proved: {}".format(evidence))
+        logger.info("PMON_NATURAL readiness_host=%s evidence=%s", host.hostname, json.dumps(evidence))
+    finally:
+        host.file(path=destination, state="absent")
+
+
 def observe_natural_recovery(hosts, ports, token, timeout=1800):
     before = service_identities(hosts)
     started = time.monotonic()
@@ -72,7 +96,7 @@ def observe_natural_recovery(hosts, ports, token, timeout=1800):
 
 def test_natural_recovery_after_late_pmon(
         duthosts, ptfhost, tbinfo, request, mux_server_url, vmhost, monkeypatch):
-    """Extend only C's passive observation, before any restoration or reset."""
+    """Check ignored-health echo readiness, then observe C before restoration."""
     hosts = [duthosts[0], duthosts[1]]
     ports = list(ordering_diag.mux_status(hosts[0]))
     pytest_assert(len(ports) == 24, "This diagnostic requires the original 24-port shape")
@@ -81,6 +105,8 @@ def test_natural_recovery_after_late_pmon(
     token = "natural-after-C-" + uuid.uuid4().hex[:8]
     original_observe = ordering_diag.observe
     original_stop = ordering_diag.stop_before_server_fault
+    original_capture = ordering_diag.start_capture
+    captures = {}
     boundary_reached = [False]
     observation_reached = [False]
 
@@ -88,16 +114,27 @@ def test_natural_recovery_after_late_pmon(
         boundary_reached[0] = True
         original_stop(interface)
 
+    def capture_with_lifetime(host, interface, original_token, server_ip):
+        capture = original_capture(host, interface, original_token, server_ip, timeout=3600)
+        if host is hosts[0] and interface == "Ethernet36":
+            captures["upper"] = capture[0]
+        return capture
+
     def extend_observation(label, observed_hosts, pmon_absent_host=None):
         original_observe(label, observed_hosts, pmon_absent_host=pmon_absent_host)
         if label == "original-startup-outcome":
             pytest_assert(not boundary_reached[0], "C did not reproduce the original blocked startup")
+            pytest_assert("upper" in captures, "Upper packet capture was not registered")
+            verify_responder_readiness(hosts[0], captures["upper"], token)
             observation_reached[0] = True
             observe_natural_recovery(observed_hosts, ports, token)
             original_observe("natural-recovery-outcome", observed_hosts)
 
     monkeypatch.setattr(ordering_diag, "stop_before_server_fault", record_boundary)
     monkeypatch.setattr(ordering_diag, "observe", extend_observation)
+    monkeypatch.setattr(ordering_diag.history, "start_syslog",
+                        partial(ordering_diag.history.start_syslog, timeout=3600))
+    monkeypatch.setattr(ordering_diag, "start_capture", capture_with_lifetime)
     ordering_diag.test_ordered_recovery(
         duthosts, ptfhost, tbinfo, request, mux_server_url, vmhost, "pmon-late")
     pytest_assert(observation_reached[0], "Natural observation was not reached")

@@ -74,12 +74,12 @@ def restore_probe_state(hosts, ptfhost, ports):
     pytest_assert(wait_until(120, 3, 0, ready, hosts[0], hosts[1]), "Diagnostic restoration did not recover mux health")
 
 
-def start_capture(host, interface, token, server_ip):
+def start_capture(host, interface, token, server_ip, timeout=1800):
     path = "/tmp/{}-{}.pcap".format(token, host.hostname)
     command = (
-        "nohup timeout 1800 tcpdump -U -n -s 256 -i {} {} -w {}"
+        "nohup timeout {} tcpdump -U -n -s 256 -i {} {} -w {}"
         " > {}.log 2>&1 < /dev/null & echo $!"
-    ).format(shlex.quote(interface), shlex.quote("icmp and host 10.1.0.36 and host " + server_ip),
+    ).format(timeout, shlex.quote(interface), shlex.quote("icmp and host 10.1.0.36 and host " + server_ip),
              shlex.quote(path), shlex.quote(path))
     pid = int(host.shell(command)["stdout"].strip())
 
