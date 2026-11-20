@@ -434,25 +434,22 @@ def reboot(duthost, localhost, reboot_type='cold', delay=10,
         logger.info('Fetching reboot cause history before rebooting')
         prev_reboot_cause_history = duthost.show_and_parse("show reboot-cause history")
 
-    # Set right before the reboot. A console attached after that is closed at once
-    # (see collect_console_log): console_thread_res.get(timeout=) does NOT cancel
-    # the ThreadPool task, so the worker can outlive the timeout.
-    reboot_started_event = threading.Event()
-    console_thread_res = pool.apply_async(
-        collect_console_log, args=(duthost, localhost),
-        kwds={"cancel_event": reboot_started_event})
+    console_obj = collect_console_log(duthost, localhost)
+    if console_obj:
+        console_thread_res = pool.apply_async(console_obj.connect)
 
-    # Block and wait for console to be ready before starting reboot
-    console_wait_max_seconds = 10
-    logger.info(f"Waiting up to {console_wait_max_seconds}s for console connection before reboot...")
-    try:
-        console_thread_res.get(timeout=console_wait_max_seconds)
-    except Exception as e:
-        logger.warning(f"Console connection timed out or failed: {e}, proceeding with reboot anyway")
+        # Block and wait for console to be ready before starting reboot
+        console_wait_max_seconds = 10
+        logger.info(f"Waiting up to {console_wait_max_seconds}s for console connection before reboot...")
+        try:
+            console_thread_res.get(timeout=console_wait_max_seconds)
+        except Exception as e:
+            logger.warning(f"Console connection timed out or failed: {e}, proceeding with reboot anyway")
 
-    # The reboot is about to start. A console worker still attaching closes its
-    # connection instead of keeping the console line open while the DUT boots.
-    reboot_started_event.set()
+        # The reboot is about to start. Stop a console connection that is still being set up, and
+        # its retries, so the console line stays quiet while the DUT boots.
+        if not console_obj.connection:
+            console_obj.disconnect()
 
     # Capture a monotonic timestamp on the test host right before issuing the reboot.
     reboot_start_time = time.monotonic()
@@ -477,7 +474,6 @@ def reboot(duthost, localhost, reboot_type='cold', delay=10,
 
     # if wait_for_ssh flag is False, do not wait for dut to boot up
     if not wait_for_ssh:
-        stop_console_log(console_thread_res)
         pool.terminate()
         return
 
@@ -485,12 +481,13 @@ def reboot(duthost, localhost, reboot_type='cold', delay=10,
         wait_for_startup(
             duthost, localhost, delay, timeout, wait_for_ansible=not return_after_reconnect)
     except Exception as err:
-        stop_console_log(console_thread_res)
+        if console_obj:
+            console_obj.disconnect()
+            logger.info('end: collect console log')
         pool.terminate()
         raise Exception(f"dut not start: {err}")
 
     if return_after_reconnect:
-        stop_console_log(console_thread_res)
         return
 
     logger.info('waiting for switch {} to initialize'.format(hostname))
@@ -538,7 +535,9 @@ def reboot(duthost, localhost, reboot_type='cold', delay=10,
 
     DUT_ACTIVE.set()
     logger.info('{} reboot finished on {}'.format(reboot_type, hostname))
-    stop_console_log(console_thread_res)
+    if console_obj:
+        console_obj.disconnect()
+        logger.info('end: collect console log')
     pool.terminate()
     dut_uptime = duthost.get_up_time(utc_timezone=True)
     logger.info('DUT {} up since {}'.format(hostname, dut_uptime))
@@ -803,10 +802,9 @@ def check_determine_reboot_cause_service(dut):
             Current sub-state: {sub_state}"
 
 
-def try_create_dut_console(duthost, localhost, conn_graph_facts, creds, cancel_event=None, attach_only=False):
+def try_create_dut_console(duthost, localhost, conn_graph_facts, creds):
     try:
-        dut_console = create_duthost_console(duthost, localhost, conn_graph_facts, creds,
-                                             cancel_event=cancel_event, attach_only=attach_only)
+        dut_console = create_duthost_console(duthost, localhost, conn_graph_facts, creds)
     except Exception as err:
         logger.warning(f"Fail to create dut console. Please check console config or if console works or not. {err}")
         return None
@@ -814,74 +812,22 @@ def try_create_dut_console(duthost, localhost, conn_graph_facts, creds, cancel_e
     return dut_console
 
 
-class ConsoleLogReader(object):
-    """Log what the DUT prints on an attached console line until stopped."""
-
-    def __init__(self, console):
-        self.console = console
-        self.stop_event = threading.Event()
-        self.thread = threading.Thread(target=self._read, daemon=True)
-        self.thread.start()
-
-    def _read(self):
-        pending = ""
-        stopped = False
-        while not stopped:
-            stopped = self.stop_event.wait(1)
-            try:
-                pending += self.console.read_channel()
-            except Exception as err:
-                logger.warning(f"Stopped reading the DUT console: {err}")
-                return
-            *lines, pending = pending.split("\n")
-            for line in lines:
-                if line.strip():
-                    logger.info(f"DUT console: {line.rstrip()}")
-        if pending.strip():
-            logger.info(f"DUT console: {pending.rstrip()}")
-
-    def stop(self):
-        self.stop_event.set()
-        self.thread.join(timeout=10)
-        self.console.disconnect()
-        logger.info('end: collect console log')
-
-
-def collect_console_log(duthost, localhost, cancel_event=None):
+def collect_console_log(duthost, localhost):
     """
-    Attach to the DUT console line and log what the DUT prints during reboot.
+    Get the DUT console line to collect console log during reboot.
 
-    The attached console does not log in to the DUT and never writes to the line, so it
-    cannot interrupt a bootloader autoboot countdown.
-
-    The caller should use pool.apply_async().get(timeout=X) to wait for the result and set
-    cancel_event right before it reboots the DUT. A console attached after that is closed
-    at once, so no connection to the console line starts while the DUT boots.
+    The console line attaches without logging in to the DUT and never writes to the line. It is
+    not connected yet: the caller connects it before the reboot and disconnects it after.
 
     Returns:
-        ConsoleLogReader if attached before the reboot, None otherwise
+        ConsoleLine if the console is configured, None otherwise
     """
-    conn_graph_facts = get_graph_facts(duthost, localhost, [duthost.hostname])
-    if cancel_event is not None and cancel_event.is_set():
+    try:
+        conn_graph_facts = get_graph_facts(duthost, localhost, [duthost.hostname])
+        return create_duthost_console(duthost, localhost, conn_graph_facts, None, attach_only=True, connect=False)
+    except Exception as err:
+        logger.warning(f"Fail to create dut console, we cannot get log by console: {err}")
         return None
-    dut_console = try_create_dut_console(duthost, localhost, conn_graph_facts, None,
-                                         cancel_event=cancel_event, attach_only=True)
-    if not dut_console:
-        logger.warning("dut console is not ready, we cannot get log by console")
-        return None
-    if cancel_event is not None and cancel_event.is_set():
-        logger.warning("Attached to the dut console after the reboot started, closing it")
-        dut_console.disconnect()
-        return None
-    logger.info("start: collect console log")
-    return ConsoleLogReader(dut_console)
-
-
-def stop_console_log(console_thread_res):
-    # The result can also be ready if the console attached just as the caller stopped waiting.
-    console_log = console_thread_res.get() if console_thread_res.ready() else None
-    if console_log:
-        console_log.stop()
 
 
 def check_ssh_connection(localhost, host_ip, port, delay, timeout, search_regex):

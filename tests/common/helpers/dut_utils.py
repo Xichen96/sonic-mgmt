@@ -13,7 +13,7 @@ from tests.common.utilities import get_host_visible_vars
 from tests.common.utilities import wait_until
 from tests.common.errors import RunAnsibleModuleFail
 from collections import defaultdict
-from tests.common.connections.console_host import ConsoleHost, CONSOLE_LINECARD
+from tests.common.connections.console_host import ConsoleHost, ConsoleLine, CONSOLE_LINECARD
 from tests.common.connections.linecard_console_conn import UnsupportedPlatformError
 from tests.common.utilities import get_dut_current_passwd, update_console_creds
 from tests.common.connections.base_console_conn import (
@@ -711,11 +711,14 @@ def create_linecard_console(supervisor, linecard_duthost, inv_files, creds):
         pytest.skip(f"Linecard console not supported: {str(e)}")
 
 
-def create_duthost_console(duthost, localhost, conn_graph_facts, creds, cancel_event=None,  # noqa: F811
-                           attach_only=False):
+def create_duthost_console(duthost, localhost, conn_graph_facts, creds, attach_only=False,  # noqa: F811
+                           connect=True):
     """
     With attach_only, attach to the DUT console line without logging in to the DUT or writing
     to the line, e.g. to read what the DUT prints during a reboot. creds is not used then.
+
+    With connect=False, return the console line without connecting to it; the caller then
+    calls connect() and disconnect() on it, see ConsoleLine.
     """
     dut_hostname = duthost.hostname
     console_host = conn_graph_facts['device_console_info'][dut_hostname]['ManagementIp']
@@ -756,7 +759,7 @@ def create_duthost_console(duthost, localhost, conn_graph_facts, creds, cancel_e
 
     if attach_only:
         # No DUT login, so no DUT password, no clearing of the console port and no retries.
-        return ConsoleHost(
+        console_line = ConsoleLine(
             console_type=console_type,
             console_host=console_host,
             console_port=console_port,
@@ -766,9 +769,9 @@ def create_duthost_console(duthost, localhost, conn_graph_facts, creds, cancel_e
             console_password=creds["console_password"].get(console_type),
             console_device=console_device,
             console_direct_ssh_port=console_direct_ssh_port,
-            cancel_event=cancel_event,
             attach_only=True,
         )
+        return console_line.connect() if connect else console_line
 
     # console password and sonic_password are lists, which may contain more than one password
     sonicadmin_alt_password = _host_vars.get("ansible_altpassword")
@@ -808,28 +811,20 @@ def create_duthost_console(duthost, localhost, conn_graph_facts, creds, cancel_e
         logger.warning(f"Issue trying to clear console port: {e}")
 
     # Set up console host
-    for attempt in range(1, 4):
-        try:
-            return ConsoleHost(
-                console_type=console_type,
-                console_host=console_host,
-                console_port=console_port,
-                sonic_username=creds["sonicadmin_user"],
-                sonic_password=sonic_password,
-                console_username=console_username,
-                console_password=creds["console_password"][console_type],
-                console_device=console_device,
-                console_direct_ssh_port=console_direct_ssh_port,
-                cancel_event=cancel_event,
-            )
-        except Exception as e:
-            logger.warning(f"Attempt {attempt}/3 failed: {e}")
-            # Back off so rapid retries do not trip the DUT serial-getty start limit.
-            if attempt < 3:
-                time.sleep(CONSOLE_RECONNECT_BACKOFF_SECS)
-            continue
-    else:
-        raise Exception("Failed to set up connection to console port. See warning logs for details.")
+    console_line = ConsoleLine(
+        attempts=3,
+        retry_interval=CONSOLE_RECONNECT_BACKOFF_SECS,
+        console_type=console_type,
+        console_host=console_host,
+        console_port=console_port,
+        sonic_username=creds["sonicadmin_user"],
+        sonic_password=sonic_password,
+        console_username=console_username,
+        console_password=creds["console_password"][console_type],
+        console_device=console_device,
+        console_direct_ssh_port=console_direct_ssh_port,
+    )
+    return console_line.connect() if connect else console_line
 
 
 def creds_on_dut(duthost):
