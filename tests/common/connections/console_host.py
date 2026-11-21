@@ -44,7 +44,7 @@ def ConsoleHost(console_type,
                 console_password=None,
                 console_device=None,
                 console_direct_ssh_port=None,
-                timeout_s=None,
+                timeout=None,
                 supervisor_ip=None,
                 slot_num=None,
                 hwsku=None,
@@ -52,14 +52,31 @@ def ConsoleHost(console_type,
                 attach_only=False):
     """Connect to a device console.
 
-    timeout_s: seconds allowed to establish the connection, None for no limit. Returns
-    None if the connection is not established in time; other failures raise.
+    Args:
+        console_type: how the console is reached, a key of ConsoleTypeMapper.
+        console_host: the console server's address (SSH and telnet types).
+        console_port: the DUT's port on the console server; how it is used depends on console_type.
+        sonic_username: DUT login user; None when not logging in (attach_only, console-server config types).
+        sonic_password: list of DUT passwords, tried in order (conserver and linecard use the first).
+        console_username: console server login user (SSH types).
+        console_password: list of console server passwords, tried in order (SSH types).
+        console_device: the conserver "host:name" of the DUT console (conserver only).
+        console_direct_ssh_port: the SSH port that reaches the DUT's line directly (console_ssh_to_port only).
+        timeout: seconds allowed to establish the connection, None for no limit.
+        supervisor_ip: address of the supervisor whose serial port reaches the linecard (linecard only).
+        slot_num: the linecard's slot, e.g. "slot3" (linecard only).
+        hwsku: the chassis HwSKU; only Arista is supported (linecard only).
+        cancel_event: threading.Event; once set, the SSH console raises instead of writing to the line.
+        attach_only: attach to the DUT's line without logging in or writing to it (SSH and telnet only).
+
+    Returns:
+        The connection, or None if it was not established within timeout. Other failures raise.
     """
     if console_type not in ConsoleTypeMapper:
         raise ValueError("console type {} is not supported yet".format(console_type))
     if attach_only and not issubclass(ConsoleTypeMapper[console_type], (SSHConsoleConn, TelnetConsoleConn)):
         raise ValueError("attach_only is not supported for console type {}".format(console_type))
-    deadline = None if timeout_s is None else time.monotonic() + timeout_s
+    deadline = None if timeout is None else time.monotonic() + timeout
     params = {
         "console_host": console_host,
         "console_port": console_port,
@@ -97,5 +114,5 @@ def ConsoleHost(console_type,
     except Exception:
         if deadline is None or time.monotonic() < deadline:
             raise
-        logger.warning("Console %s port %s was not connected within %ss", console_host, console_port, timeout_s)
+        logger.warning("Console %s port %s was not connected within %ss", console_host, console_port, timeout)
         return None

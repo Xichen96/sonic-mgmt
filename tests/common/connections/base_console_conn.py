@@ -62,7 +62,7 @@ LOGIN_FAILURE_PATTERN = r".*incorrect"
 
 
 class ConsoleConnectTimeout(Exception):
-    """The console connection was not established within ConsoleHost's timeout_s."""
+    """The console connection was not established within ConsoleHost's timeout."""
 
     def __init__(self, message="Console connection was not established within the timeout"):
         super(ConsoleConnectTimeout, self).__init__(message)
