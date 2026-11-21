@@ -5,6 +5,13 @@ import time
 
 CONSERVER_CLI_PROMPT = "admin@[a-zA-Z0-9]{1,10}:~\\$"
 CONSERVER_DEBUG_FILE = "/tmp/conserver_console_debug.log"
+CONSERVER_DEFAULT_TIMEOUT_S = 30
+CONSERVER_DELAY_FACTOR = 1
+
+
+def connect_step_timeout(timeout, deadline):
+    """``timeout`` capped by the time left before the connect ``deadline`` (a time.monotonic() value, or None)."""
+    return timeout if deadline is None else max(0, min(timeout, deadline - time.monotonic()))
 
 
 class ConserverConsoleConn():
@@ -22,8 +29,9 @@ class ConserverConsoleConn():
         self.conserver_name = conserver_info[1]
         self.device_type = "_conserver"
         self.port = kwargs['console_port']
-        self.delay_factor = 1
-        self.default_timeout = 30
+        self.delay_factor = CONSERVER_DELAY_FACTOR
+        self.default_timeout = CONSERVER_DEFAULT_TIMEOUT_S
+        deadline = kwargs.get('connect_deadline')
 
         console_cli = pexpect.spawn(
             'console', ["-f", "-M", self.conserver_host,
@@ -34,13 +42,19 @@ class ConserverConsoleConn():
             os.remove(CONSERVER_DEBUG_FILE)
         console_cli.logfile = open(CONSERVER_DEBUG_FILE, "wb")
 
-        console_cli.sendline()
-        match = console_cli.expect(["login", CONSERVER_CLI_PROMPT])
-        if match == 0:
-            console_cli.sendline(self.sonic_username)
-            console_cli.expect("Password:")
-            console_cli.sendline(self.sonic_password)
-            console_cli.expect(CONSERVER_CLI_PROMPT)
+        try:
+            console_cli.sendline()
+            match = console_cli.expect(["login", CONSERVER_CLI_PROMPT],
+                                       timeout=connect_step_timeout(self.default_timeout, deadline))
+            if match == 0:
+                console_cli.sendline(self.sonic_username)
+                console_cli.expect("Password:", timeout=connect_step_timeout(self.default_timeout, deadline))
+                console_cli.sendline(self.sonic_password)
+                console_cli.expect(CONSERVER_CLI_PROMPT, timeout=connect_step_timeout(self.default_timeout, deadline))
+        except Exception:
+            if deadline is not None and time.monotonic() >= deadline:
+                console_cli.close(force=True)
+            raise
 
         self.console_cli = console_cli
 

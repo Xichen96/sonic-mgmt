@@ -3,6 +3,7 @@ Base class for console connection of SONiC devices
 """
 
 import logging
+import time
 import paramiko
 
 from netmiko.cisco_base_connection import CiscoBaseConnection
@@ -41,11 +42,50 @@ CONSOLE_CONSERVER = "console_conserver"
 # Console login via SSH to Raritan
 CONSOLE_SSH_RARITAN_CONFIG = "console_ssh_to_port_raritan_config"
 
+# netmiko settings. fast_cli: see BaseConsoleConn.__init__. The connect phases are TCP
+# connect, SSH banner and SSH authentication; blocking is the socket read timeout once
+# the session is open.
+FAST_CLI = False
+CONN_TIMEOUT_S = 10
+BANNER_TIMEOUT_S = 15
+AUTH_TIMEOUT_S = 30
+BLOCKING_TIMEOUT_S = 20
+# Multiplier for the login waits below; netmiko raises it to its global delay factor.
+DELAY_FACTOR = 1
+# Pause between successive reads and writes while driving a login.
+READ_INTERVAL_S = 0.5
+# Pause for the DUT to react to a login step (start, username, failed login, exit).
+RESPONSE_WAIT_S = 1
+# Rounds of the DUT login loop.
+LOGIN_MAX_LOOPS = 20
+LOGIN_FAILURE_PATTERN = r".*incorrect"
+
+
+class ConsoleConnectTimeout(Exception):
+    """The console connection was not established within ConsoleHost's timeout_s."""
+
+    def __init__(self, message="Console connection was not established within the timeout"):
+        super(ConsoleConnectTimeout, self).__init__(message)
+
+
+def connect_timed_out(deadline):
+    """Whether the connect ``deadline`` (a time.monotonic() value, None for none) has passed."""
+    return deadline is not None and time.monotonic() >= deadline
+
+
+def connect_step_timeout(timeout, deadline):
+    """``timeout`` capped by the time left before the connect ``deadline``."""
+    if deadline is None:
+        return timeout
+    return max(0, min(timeout, deadline - time.monotonic()))
+
 
 class BaseConsoleConn(CiscoBaseConnection):
 
     def __init__(self, **kwargs):
         self.logger = logging.getLogger(__name__)
+        # Read by read_channel() during the connect; cleared once connected.
+        self._connect_deadline = kwargs.pop("connect_deadline", None)
         # Clear additional args before passing to BaseConsoleConn
         all_passwords = kwargs['console_password']
         key_to_rm = [
@@ -67,7 +107,8 @@ class BaseConsoleConn(CiscoBaseConnection):
         # to 0.1, which shrinks login polling budgets too tightly for
         # serial-console getty timing. Default it off; callers can still
         # opt in via kwargs.
-        kwargs.setdefault('fast_cli', False)
+        kwargs.setdefault('fast_cli', FAST_CLI)
+        kwargs.setdefault('blocking_timeout', BLOCKING_TIMEOUT_S)
 
         # Allow legacy KEX and host key algorithms for older console servers
         # (e.g. Cisco SSH-2.0-Cisco-1.25) that only support legacy crypto.
@@ -111,13 +152,47 @@ class BaseConsoleConn(CiscoBaseConnection):
 
         for i in range(0, len(all_passwords)):
             kwargs['password'] = all_passwords[i]
+            if connect_timed_out(self._connect_deadline):
+                raise ConsoleConnectTimeout()
+            kwargs['conn_timeout'] = connect_step_timeout(CONN_TIMEOUT_S, self._connect_deadline)
+            kwargs['banner_timeout'] = connect_step_timeout(BANNER_TIMEOUT_S, self._connect_deadline)
+            kwargs['auth_timeout'] = connect_step_timeout(AUTH_TIMEOUT_S, self._connect_deadline)
+            self._console_server_accepted = False
             try:
                 super(BaseConsoleConn, self).__init__(**kwargs)
-            except NetMikoAuthenticationException as e:
-                if i == len(all_passwords) - 1:
-                    raise e
+            except Exception as e:
+                if connect_timed_out(self._connect_deadline):
+                    self._close_transport()
+                    raise ConsoleConnectTimeout() from e
+                # One way: once the console server has accepted a password, a later failure
+                # (the DUT login) ends the connect instead of trying the next console password.
+                if not isinstance(e, NetMikoAuthenticationException) \
+                        or self._console_server_accepted or i == len(all_passwords) - 1:
+                    raise
             else:
                 break
+        self._connect_deadline = None
+
+    def _try_session_preparation(self, force_data=True):
+        # netmiko runs this after the console server accepted the connection.
+        self._console_server_accepted = True
+        return super(BaseConsoleConn, self)._try_session_preparation(force_data=force_data)
+
+    def read_channel(self):
+        # Every connect-time wait reads the channel, so this one check bounds the whole connect.
+        if connect_timed_out(self._connect_deadline):
+            raise ConsoleConnectTimeout()
+        return super(BaseConsoleConn, self).read_channel()
+
+    def _close_transport(self):
+        """Close the connection without writing to it."""
+        try:
+            if self.protocol == "ssh":
+                self.paramiko_cleanup()
+            elif self.remote_conn is not None:
+                self.remote_conn.close()
+        except Exception as e:
+            self.logger.debug("Error closing console transport: %s", e)
 
     def set_base_prompt(self, pri_prompt_terminator='#',
                         alt_prompt_terminator='$', delay_factor=1):

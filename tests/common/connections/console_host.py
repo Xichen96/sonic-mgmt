@@ -1,3 +1,6 @@
+import logging
+import time
+
 from .base_console_conn import (
     CONSOLE_SSH,
     CONSOLE_SSH_CISCO_CONFIG,
@@ -13,6 +16,8 @@ from .telnet_console_conn import TelnetConsoleConn
 from .ssh_console_conn import SSHConsoleConn
 from .conserver_console_conn import ConserverConsoleConn
 from .linecard_console_conn import LinecardConsoleConn
+
+logger = logging.getLogger(__name__)
 
 CONSOLE_LINECARD = "console_linecard"
 
@@ -39,17 +44,22 @@ def ConsoleHost(console_type,
                 console_password=None,
                 console_device=None,
                 console_direct_ssh_port=None,
-                timeout_s=100,
+                timeout_s=None,
                 supervisor_ip=None,
-                linecard_number=None,
                 slot_num=None,
                 hwsku=None,
                 cancel_event=None,
                 attach_only=False):
+    """Connect to a device console.
+
+    timeout_s: seconds allowed to establish the connection, None for no limit. Returns
+    None if the connection is not established in time; other failures raise.
+    """
     if console_type not in ConsoleTypeMapper:
         raise ValueError("console type {} is not supported yet".format(console_type))
     if attach_only and not issubclass(ConsoleTypeMapper[console_type], (SSHConsoleConn, TelnetConsoleConn)):
         raise ValueError("attach_only is not supported for console type {}".format(console_type))
+    deadline = None if timeout_s is None else time.monotonic() + timeout_s
     params = {
         "console_host": console_host,
         "console_port": console_port,
@@ -59,7 +69,7 @@ def ConsoleHost(console_type,
         "console_username": console_username,
         "console_password": console_password,
         "console_device": console_device,
-        "timeout": timeout_s
+        "connect_deadline": deadline,
     }
 
     # Only SSHConsoleConn consumes cancel_event (it pops it before delegating to
@@ -75,8 +85,6 @@ def ConsoleHost(console_type,
     # Add linecard-specific parameters if provided
     if supervisor_ip is not None:
         params["supervisor_ip"] = supervisor_ip
-    if linecard_number is not None:
-        params["linecard_number"] = linecard_number
     if slot_num is not None:
         params["slot_num"] = slot_num
     if hwsku is not None:
@@ -84,4 +92,10 @@ def ConsoleHost(console_type,
     if console_direct_ssh_port is not None:
         params["direct_ssh_port"] = console_direct_ssh_port
 
-    return ConsoleTypeMapper[console_type](**params)
+    try:
+        return ConsoleTypeMapper[console_type](**params)
+    except Exception:
+        if deadline is None or time.monotonic() < deadline:
+            raise
+        logger.warning("Console %s port %s was not connected within %ss", console_host, console_port, timeout_s)
+        return None

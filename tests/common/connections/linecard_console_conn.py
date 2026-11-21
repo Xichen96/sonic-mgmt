@@ -5,6 +5,21 @@ import time
 
 LINECARD_CLI_PROMPT = r"admin@[a-zA-Z0-9\-]{1,20}:~\$"
 LINECARD_DEBUG_FILE = "/tmp/linecard_console_debug.log"
+LINECARD_DEFAULT_TIMEOUT_S = 30
+LINECARD_DELAY_FACTOR = 1
+# Arista: slot3 -> SCD0, slot7 -> SCD4
+ARISTA_FIRST_LINECARD_SLOT = 3
+PICOCOM_KILL_TIMEOUT_S = 5
+PICOCOM_READY_TIMEOUT_S = 20
+PICOCOM_EXIT_TIMEOUT_S = 20
+LINECARD_LOGIN_PROMPT_TIMEOUT_S = 20
+LINECARD_PASSWORD_PROMPT_TIMEOUT_S = 10
+LINECARD_LOGIN_RESULT_TIMEOUT_S = 30
+
+
+def connect_step_timeout(timeout, deadline):
+    """``timeout`` capped by the time left before the connect ``deadline`` (a time.monotonic() value, or None)."""
+    return timeout if deadline is None else max(0, min(timeout, deadline - time.monotonic()))
 
 
 class UnsupportedPlatformError(Exception):
@@ -25,8 +40,9 @@ class LinecardConsoleConn():
 
     def __init__(self, **kwargs):
         self.logger = logging.getLogger(__name__)
-        self.delay_factor = 1
-        self.default_timeout = 30
+        self.delay_factor = LINECARD_DELAY_FACTOR
+        self.default_timeout = LINECARD_DEFAULT_TIMEOUT_S
+        deadline = kwargs.get('connect_deadline')
 
         # Validate hwsku FIRST before doing anything else
         hwsku = kwargs.get('hwsku', '').lower()
@@ -48,8 +64,8 @@ class LinecardConsoleConn():
                           else kwargs['sonic_password'])
         slot_num = kwargs['slot_num']
 
-        # Platform-specific slot conversion (Arista: slot3 -> SCD0, slot7 -> SCD4)
-        self.linecard_number = str(int(slot_num[len("slot"):]) - 3)
+        # Platform-specific slot conversion
+        self.linecard_number = str(int(slot_num[len("slot"):]) - ARISTA_FIRST_LINECARD_SLOT)
 
         # SSH to supervisor
         ssh_cmd = f'ssh {sonic_username}@{supervisor_ip} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
@@ -62,39 +78,51 @@ class LinecardConsoleConn():
             os.remove(LINECARD_DEBUG_FILE)
         console_cli.logfile = open(LINECARD_DEBUG_FILE, "wb")
 
+        try:
+            self._connect(console_cli, sonic_username, sonic_password, deadline)
+        except Exception:
+            if deadline is not None and time.monotonic() >= deadline:
+                console_cli.close(force=True)
+            raise
+
+        self.console_cli = console_cli
+
+    def _connect(self, console_cli, sonic_username, sonic_password, deadline):
+        """Log in to the supervisor, attach picocom to the linecard serial port and log in to the linecard."""
         # Authenticate to supervisor
-        console_cli.expect('[Pp]assword:')
+        console_cli.expect('[Pp]assword:', timeout=connect_step_timeout(self.default_timeout, deadline))
         console_cli.sendline(sonic_password)
-        console_cli.expect(LINECARD_CLI_PROMPT)
+        console_cli.expect(LINECARD_CLI_PROMPT, timeout=connect_step_timeout(self.default_timeout, deadline))
 
         # Kill any existing picocom sessions
         console_cli.sendline('sudo pkill -9 picocom || true')
         try:
-            console_cli.expect(LINECARD_CLI_PROMPT, timeout=5)
+            console_cli.expect(LINECARD_CLI_PROMPT, timeout=connect_step_timeout(PICOCOM_KILL_TIMEOUT_S, deadline))
         except pexpect.exceptions.TIMEOUT:
             console_cli.sendline('')
-            console_cli.expect(LINECARD_CLI_PROMPT, timeout=5)
+            console_cli.expect(LINECARD_CLI_PROMPT, timeout=connect_step_timeout(PICOCOM_KILL_TIMEOUT_S, deadline))
 
         # Launch picocom to connect to linecard
         console_cli.sendline(f"sudo /usr/bin/picocom /dev/ttySCD{self.linecard_number}")
-        console_cli.expect('Terminal ready', timeout=20)
+        console_cli.expect('Terminal ready', timeout=connect_step_timeout(PICOCOM_READY_TIMEOUT_S, deadline))
         console_cli.sendline('\n')
 
         # Authenticate to linecard
         try:
-            match = console_cli.expect(['login:', LINECARD_CLI_PROMPT], timeout=20)
+            match = console_cli.expect(['login:', LINECARD_CLI_PROMPT],
+                                       timeout=connect_step_timeout(LINECARD_LOGIN_PROMPT_TIMEOUT_S, deadline))
             if match == 0:
                 console_cli.sendline(sonic_username)
-                console_cli.expect('[Pp]assword:', timeout=10)
+                console_cli.expect('[Pp]assword:',
+                                   timeout=connect_step_timeout(LINECARD_PASSWORD_PROMPT_TIMEOUT_S, deadline))
                 console_cli.sendline(sonic_password)
-                if console_cli.expect([LINECARD_CLI_PROMPT, 'Login incorrect'], timeout=30) == 1:
+                if console_cli.expect([LINECARD_CLI_PROMPT, 'Login incorrect'],
+                                      timeout=connect_step_timeout(LINECARD_LOGIN_RESULT_TIMEOUT_S, deadline)) == 1:
                     raise Exception(f"Failed to authenticate to linecard {self.linecard_number}")
         except pexpect.exceptions.TIMEOUT:
             raise Exception(f"Timeout waiting for login prompt on linecard {self.linecard_number}")
         except pexpect.exceptions.EOF:
             raise Exception(f"EOF reached while connecting to linecard {self.linecard_number}")
-
-        self.console_cli = console_cli
 
     def send_command(
         self,
@@ -183,7 +211,7 @@ class LinecardConsoleConn():
 
         # Wait for picocom exit confirmation or supervisor prompt
         try:
-            self.console_cli.expect([LINECARD_CLI_PROMPT, 'Thanks for using picocom'], timeout=20)
+            self.console_cli.expect([LINECARD_CLI_PROMPT, 'Thanks for using picocom'], timeout=PICOCOM_EXIT_TIMEOUT_S)
         except pexpect.exceptions.TIMEOUT:
             self.logger.warning("Timeout waiting for picocom exit confirmation")
 

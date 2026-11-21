@@ -1,10 +1,21 @@
 import time
 import re
-from .base_console_conn import BaseConsoleConn
+from .base_console_conn import (
+    BaseConsoleConn,
+    DELAY_FACTOR,
+    LOGIN_FAILURE_PATTERN,
+    LOGIN_MAX_LOOPS,
+    READ_INTERVAL_S,
+    RESPONSE_WAIT_S,
+)
 try:
     from netmiko.ssh_exception import NetMikoAuthenticationException
 except ImportError:
     from netmiko.exceptions import NetMikoAuthenticationException
+
+# Reads, and the pause between them, while a Cisco device leaves its initial configuration dialog.
+CISCO_SETUP_DIALOG_MAX_READS = 15
+CISCO_SETUP_DIALOG_WAIT_S = 2
 
 
 class TelnetConsoleConn(BaseConsoleConn):
@@ -43,18 +54,17 @@ class TelnetConsoleConn(BaseConsoleConn):
         alt_prompt_terminator=r".*\$ ",
         username_pattern=r"(?:user:|username|login|user name)",
         pwd_pattern=r"assword",
-        delay_factor=1,
-        max_loops=20,
+        delay_factor=DELAY_FACTOR,
+        max_loops=LOGIN_MAX_LOOPS,
     ):
         """Telnet login. Can be username/password or just password."""
         if self.attach_only:
             return ""
         delay_factor = self.select_delay_factor(delay_factor)
-        time.sleep(1 * delay_factor)
+        time.sleep(RESPONSE_WAIT_S * delay_factor)
 
         output = ""
         return_msg = ""
-        login_failure_prompt = r".*incorrect"
         username_sent = False
         password_sent = False
         i = 1
@@ -67,14 +77,14 @@ class TelnetConsoleConn(BaseConsoleConn):
                 if not username_sent and re.search(username_pattern, output, flags=re.I):
                     self.write_channel(self.username + self.TELNET_RETURN)
                     username_sent = True
-                    time.sleep(1 * delay_factor)
+                    time.sleep(RESPONSE_WAIT_S * delay_factor)
                     output = self.read_channel()
                     return_msg = output
 
                 # Search for password pattern / send password
                 if username_sent and not password_sent and re.search(pwd_pattern, output, flags=re.I):
                     self.write_channel(self.password + self.TELNET_RETURN)
-                    time.sleep(0.5 * delay_factor)
+                    time.sleep(READ_INTERVAL_S * delay_factor)
                     password_sent = True
                     output = self.read_channel()
                     return_msg += output
@@ -86,15 +96,15 @@ class TelnetConsoleConn(BaseConsoleConn):
                 # Support direct telnet through terminal server
                 if re.search(r"initial configuration dialog\? \[yes/no\]: ", output):
                     self.write_channel("no" + self.TELNET_RETURN)
-                    time.sleep(0.5 * delay_factor)
+                    time.sleep(READ_INTERVAL_S * delay_factor)
                     count = 0
-                    while count < 15:
+                    while count < CISCO_SETUP_DIALOG_MAX_READS:
                         output = self.read_channel()
                         return_msg += output
                         if re.search(r"ress RETURN to get started", output):
                             output = ""
                             break
-                        time.sleep(2 * delay_factor)
+                        time.sleep(CISCO_SETUP_DIALOG_WAIT_S * delay_factor)
                         count += 1
 
                 # Check for device with no password configured
@@ -112,15 +122,15 @@ class TelnetConsoleConn(BaseConsoleConn):
                     return return_msg
 
                 #  Check if login failed
-                if re.search(login_failure_prompt, output, flags=re.M):
+                if re.search(LOGIN_FAILURE_PATTERN, output, flags=re.M):
                     self.remote_conn.close()
                     # Wait a short time or the next login will be refused
-                    time.sleep(1 * delay_factor)
+                    time.sleep(RESPONSE_WAIT_S * delay_factor)
                     msg = "Login failed: {} password: {}".format(self.host, self.password)
                     raise NetMikoAuthenticationException(msg)
 
                 self.write_channel(self.TELNET_RETURN)
-                time.sleep(0.5 * delay_factor)
+                time.sleep(READ_INTERVAL_S * delay_factor)
                 i += 1
             except EOFError:
                 self.remote_conn.close()
@@ -129,7 +139,7 @@ class TelnetConsoleConn(BaseConsoleConn):
 
         # Last try to see if we already logged in
         self.write_channel(self.TELNET_RETURN)
-        time.sleep(0.5 * delay_factor)
+        time.sleep(READ_INTERVAL_S * delay_factor)
         output = self.read_channel()
         return_msg += output
         if re.search(pri_prompt_terminator, output, flags=re.M) or re.search(
