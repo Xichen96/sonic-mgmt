@@ -5,8 +5,12 @@ import time
 
 CONSERVER_CLI_PROMPT = "admin@[a-zA-Z0-9]{1,10}:~\\$"
 CONSERVER_DEBUG_FILE = "/tmp/conserver_console_debug.log"
-CONSERVER_DEFAULT_TIMEOUT_S = 30
 CONSERVER_DELAY_FACTOR = 1
+# Timeout of a read the caller gives none for, and of each connect step.
+DEFAULT_CONSERVER_TIMEOUT_S = 30
+DEFAULT_CONSERVER_EXPECT_STRING = CONSERVER_CLI_PROMPT
+DEFAULT_CONSERVER_TIMING_READ_TIMEOUT_S = 30
+DEFAULT_CONSERVER_TIMING_LAST_READ_S = 1.0
 
 
 def connect_step_timeout(timeout, deadline):
@@ -30,7 +34,7 @@ class ConserverConsoleConn():
         self.device_type = "_conserver"
         self.port = kwargs['console_port']
         self.delay_factor = CONSERVER_DELAY_FACTOR
-        self.default_timeout = CONSERVER_DEFAULT_TIMEOUT_S
+        self.default_timeout = DEFAULT_CONSERVER_TIMEOUT_S
         deadline = kwargs.get('connect_deadline')
 
         console_cli = pexpect.spawn(
@@ -61,7 +65,7 @@ class ConserverConsoleConn():
     def send_command(
         self,
         cmd,
-        expect_string=CONSERVER_CLI_PROMPT,
+        expect_string=DEFAULT_CONSERVER_EXPECT_STRING,
         max_loops=None,
         read_timeout=None,
         cmd_verify=True,
@@ -97,7 +101,8 @@ class ConserverConsoleConn():
         self.console_cli.close(force=True)
         self.logger.debug("Conserver connection closed.")
 
-    def send_command_timing(self, cmd, read_timeout=30, last_read=1.0):
+    def send_command_timing(self, cmd, read_timeout=DEFAULT_CONSERVER_TIMING_READ_TIMEOUT_S,
+                            last_read=DEFAULT_CONSERVER_TIMING_LAST_READ_S):
         """Send command and read output until no data for 'last_read' seconds."""
         self.logger.debug("send_command_timing: cmd='%s'", cmd[:80])
 

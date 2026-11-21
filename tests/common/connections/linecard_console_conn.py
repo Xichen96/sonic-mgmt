@@ -5,8 +5,12 @@ import time
 
 LINECARD_CLI_PROMPT = r"admin@[a-zA-Z0-9\-]{1,20}:~\$"
 LINECARD_DEBUG_FILE = "/tmp/linecard_console_debug.log"
-LINECARD_DEFAULT_TIMEOUT_S = 30
 LINECARD_DELAY_FACTOR = 1
+# Timeout of a read the caller gives none for, and of the supervisor login steps.
+DEFAULT_LINECARD_TIMEOUT_S = 30
+DEFAULT_LINECARD_EXPECT_STRING = LINECARD_CLI_PROMPT
+DEFAULT_LINECARD_TIMING_READ_TIMEOUT_S = 30
+DEFAULT_LINECARD_TIMING_LAST_READ_S = 1.0
 # Arista: slot3 -> SCD0, slot7 -> SCD4
 ARISTA_FIRST_LINECARD_SLOT = 3
 PICOCOM_KILL_TIMEOUT_S = 5
@@ -41,7 +45,7 @@ class LinecardConsoleConn():
     def __init__(self, **kwargs):
         self.logger = logging.getLogger(__name__)
         self.delay_factor = LINECARD_DELAY_FACTOR
-        self.default_timeout = LINECARD_DEFAULT_TIMEOUT_S
+        self.default_timeout = DEFAULT_LINECARD_TIMEOUT_S
         deadline = kwargs.get('connect_deadline')
 
         # Validate hwsku FIRST before doing anything else
@@ -127,7 +131,7 @@ class LinecardConsoleConn():
     def send_command(
         self,
         cmd,
-        expect_string=LINECARD_CLI_PROMPT,
+        expect_string=DEFAULT_LINECARD_EXPECT_STRING,
         max_loops=None,
         read_timeout=None,
         cmd_verify=True,
@@ -157,7 +161,8 @@ class LinecardConsoleConn():
         # Remove the command echo (first line)
         return output.split(linesep, 1)[1].strip() if linesep in output else output.strip()
 
-    def send_command_timing(self, cmd, read_timeout=30, last_read=1.0):
+    def send_command_timing(self, cmd, read_timeout=DEFAULT_LINECARD_TIMING_READ_TIMEOUT_S,
+                            last_read=DEFAULT_LINECARD_TIMING_LAST_READ_S):
         """Send command and read output until no data arrives for last_read seconds."""
         self.logger.debug("send_command_timing: cmd='%s'", cmd[:80])
 

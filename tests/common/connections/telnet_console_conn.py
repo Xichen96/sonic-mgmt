@@ -1,13 +1,6 @@
 import time
 import re
-from .base_console_conn import (
-    BaseConsoleConn,
-    DELAY_FACTOR,
-    LOGIN_FAILURE_PATTERN,
-    LOGIN_MAX_LOOPS,
-    READ_INTERVAL_S,
-    RESPONSE_WAIT_S,
-)
+from .base_console_conn import BaseConsoleConn
 try:
     from netmiko.ssh_exception import NetMikoAuthenticationException
 except ImportError:
@@ -16,6 +9,19 @@ except ImportError:
 # Reads, and the pause between them, while a Cisco device leaves its initial configuration dialog.
 CISCO_SETUP_DIALOG_MAX_READS = 15
 CISCO_SETUP_DIALOG_WAIT_S = 2
+LOGIN_FAILURE_PATTERN = r".*incorrect"
+# Pause between successive reads and writes while driving a login.
+READ_INTERVAL_S = 0.5
+# Pause for the DUT to react to a login step (start, username, failed login).
+RESPONSE_WAIT_S = 1
+# telnet_login defaults. The delay factor multiplies the login waits; netmiko raises it to
+# its global delay factor.
+DEFAULT_DELAY_FACTOR = 1
+DEFAULT_LOGIN_MAX_LOOPS = 20
+DEFAULT_LOGIN_PRI_PROMPT_TERMINATOR = r".*# "
+DEFAULT_LOGIN_ALT_PROMPT_TERMINATOR = r".*\$ "
+DEFAULT_LOGIN_USERNAME_PATTERN = r"(?:user:|username|login|user name)"
+DEFAULT_LOGIN_PWD_PATTERN = r"assword"
 
 
 class TelnetConsoleConn(BaseConsoleConn):
@@ -50,12 +56,12 @@ class TelnetConsoleConn(BaseConsoleConn):
 
     def telnet_login(
         self,
-        pri_prompt_terminator=r".*# ",
-        alt_prompt_terminator=r".*\$ ",
-        username_pattern=r"(?:user:|username|login|user name)",
-        pwd_pattern=r"assword",
-        delay_factor=DELAY_FACTOR,
-        max_loops=LOGIN_MAX_LOOPS,
+        pri_prompt_terminator=DEFAULT_LOGIN_PRI_PROMPT_TERMINATOR,
+        alt_prompt_terminator=DEFAULT_LOGIN_ALT_PROMPT_TERMINATOR,
+        username_pattern=DEFAULT_LOGIN_USERNAME_PATTERN,
+        pwd_pattern=DEFAULT_LOGIN_PWD_PATTERN,
+        delay_factor=DEFAULT_DELAY_FACTOR,
+        max_loops=DEFAULT_LOGIN_MAX_LOOPS,
     ):
         """Telnet login. Can be username/password or just password."""
         if self.attach_only:

@@ -9,11 +9,6 @@ from .base_console_conn import (
     CONSOLE_SSH_CISCO_CONFIG,
     CONSOLE_SSH_SONIC_CONFIG,
     ConsoleConnectTimeout,
-    DELAY_FACTOR,
-    LOGIN_FAILURE_PATTERN,
-    LOGIN_MAX_LOOPS,
-    READ_INTERVAL_S,
-    RESPONSE_WAIT_S,
 )
 try:
     from netmiko.ssh_exception import NetMikoAuthenticationException
@@ -64,16 +59,30 @@ SONIC_SHELL_PROMPT_PATTERNS = (
     r'root@.*:.*#',
     r'.*@sonic.*[\$#]',
 )
-# Reads of the line on connect, before anything is written to it.
-INITIAL_READ_MAX_READS = 6
+LOGIN_FAILURE_PATTERN = r".*incorrect"
+# Pause between successive reads and writes while driving a login.
+READ_INTERVAL_S = 0.5
+# Pause for the DUT to react to a login step (start, username, failed login, exit).
+RESPONSE_WAIT_S = 1
 # Reads in one passive look at the line before deciding whether to write.
 PROBE_READS = 4
-# Looks at the line while recovering a leftover shell back to the login prompt.
-RECOVER_MAX_ATTEMPTS = 4
-# CRs sent after a wrong password while waiting for a fresh login prompt.
-RESYNC_MAX_LOOPS = 20
 # Pause before clearing the read buffer once the prompt is set.
 FINALISE_WAIT_S = 0.3
+# Method defaults. The delay factor multiplies the login waits; netmiko raises it to its
+# global delay factor.
+DEFAULT_DELAY_FACTOR = 1
+# Reads of the line on connect, before anything is written to it.
+DEFAULT_INITIAL_READ_MAX_READS = 6
+# Looks at the line while recovering a leftover shell back to the login prompt.
+DEFAULT_RECOVER_MAX_ATTEMPTS = 4
+# CRs sent after a wrong password while waiting for a fresh login prompt.
+DEFAULT_RESYNC_MAX_LOOPS = 20
+# login_stage_2: rounds of the login loop and the prompts it looks for.
+DEFAULT_LOGIN_MAX_LOOPS = 20
+DEFAULT_LOGIN_PRI_PROMPT_TERMINATOR = r".*# "
+DEFAULT_LOGIN_ALT_PROMPT_TERMINATOR = r".*\$ "
+DEFAULT_LOGIN_USERNAME_PATTERN = r"(?:user:|username|login:|user name)"
+DEFAULT_LOGIN_PWD_PATTERN = r"assword"
 
 
 class ConsoleRebootStartedError(Exception):
@@ -179,7 +188,7 @@ class SSHConsoleConn(BaseConsoleConn):
         """
         return super(SSHConsoleConn, self)._try_session_preparation(force_data=False)
 
-    def _read_initial_console(self, max_reads=INITIAL_READ_MAX_READS, delay_factor=DELAY_FACTOR):
+    def _read_initial_console(self, max_reads=DEFAULT_INITIAL_READ_MAX_READS, delay_factor=DEFAULT_DELAY_FACTOR):
         """Passively read the initial console output WITHOUT writing anything.
 
         session_preparation() must inspect the first console output (a console
@@ -371,7 +380,7 @@ class SSHConsoleConn(BaseConsoleConn):
         time.sleep(FINALISE_WAIT_S * self.global_delay_factor)
         self.clear_buffer()
 
-    def _recover_to_login_prompt(self, max_attempts=RECOVER_MAX_ATTEMPTS, delay_factor=DELAY_FACTOR):
+    def _recover_to_login_prompt(self, max_attempts=DEFAULT_RECOVER_MAX_ATTEMPTS, delay_factor=DEFAULT_DELAY_FACTOR):
         """
         Ensure the console is at a fresh "login:" prompt before logging in.
 
@@ -461,7 +470,7 @@ class SSHConsoleConn(BaseConsoleConn):
         self.clear_buffer()
         return False
 
-    def _resync_to_login_prompt(self, max_loops=RESYNC_MAX_LOOPS, delay_factor=DELAY_FACTOR):
+    def _resync_to_login_prompt(self, max_loops=DEFAULT_RESYNC_MAX_LOOPS, delay_factor=DEFAULT_DELAY_FACTOR):
         """
         Re-synchronise the console to a fresh "login:" prompt.
 
@@ -497,12 +506,12 @@ class SSHConsoleConn(BaseConsoleConn):
                       username,
                       password,
                       menu_port=None,
-                      pri_prompt_terminator=r".*# ",
-                      alt_prompt_terminator=r".*\$ ",
-                      username_pattern=r"(?:user:|username|login:|user name)",
-                      pwd_pattern=r"assword",
-                      delay_factor=DELAY_FACTOR,
-                      max_loops=LOGIN_MAX_LOOPS,
+                      pri_prompt_terminator=DEFAULT_LOGIN_PRI_PROMPT_TERMINATOR,
+                      alt_prompt_terminator=DEFAULT_LOGIN_ALT_PROMPT_TERMINATOR,
+                      username_pattern=DEFAULT_LOGIN_USERNAME_PATTERN,
+                      pwd_pattern=DEFAULT_LOGIN_PWD_PATTERN,
+                      delay_factor=DEFAULT_DELAY_FACTOR,
+                      max_loops=DEFAULT_LOGIN_MAX_LOOPS,
                       defer_on_bootloader=False
                       ):
         """

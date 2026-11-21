@@ -45,20 +45,15 @@ CONSOLE_SSH_RARITAN_CONFIG = "console_ssh_to_port_raritan_config"
 # netmiko settings. fast_cli: see BaseConsoleConn.__init__. The connect phases are TCP
 # connect, SSH banner and SSH authentication; blocking is the socket read timeout once
 # the session is open.
-FAST_CLI = False
+DEFAULT_FAST_CLI = False
 CONN_TIMEOUT_S = 10
 BANNER_TIMEOUT_S = 15
 AUTH_TIMEOUT_S = 30
-BLOCKING_TIMEOUT_S = 20
-# Multiplier for the login waits below; netmiko raises it to its global delay factor.
-DELAY_FACTOR = 1
-# Pause between successive reads and writes while driving a login.
-READ_INTERVAL_S = 0.5
-# Pause for the DUT to react to a login step (start, username, failed login, exit).
-RESPONSE_WAIT_S = 1
-# Rounds of the DUT login loop.
-LOGIN_MAX_LOOPS = 20
-LOGIN_FAILURE_PATTERN = r".*incorrect"
+DEFAULT_BLOCKING_TIMEOUT_S = 20
+# Defaults of the netmiko methods overridden below.
+DEFAULT_PRI_PROMPT_TERMINATOR = '#'
+DEFAULT_ALT_PROMPT_TERMINATOR = '$'
+DEFAULT_DELAY_FACTOR = 1
 
 
 class ConsoleConnectTimeout(Exception):
@@ -107,8 +102,8 @@ class BaseConsoleConn(CiscoBaseConnection):
         # to 0.1, which shrinks login polling budgets too tightly for
         # serial-console getty timing. Default it off; callers can still
         # opt in via kwargs.
-        kwargs.setdefault('fast_cli', FAST_CLI)
-        kwargs.setdefault('blocking_timeout', BLOCKING_TIMEOUT_S)
+        kwargs.setdefault('fast_cli', DEFAULT_FAST_CLI)
+        kwargs.setdefault('blocking_timeout', DEFAULT_BLOCKING_TIMEOUT_S)
 
         # Allow legacy KEX and host key algorithms for older console servers
         # (e.g. Cisco SSH-2.0-Cisco-1.25) that only support legacy crypto.
@@ -194,8 +189,8 @@ class BaseConsoleConn(CiscoBaseConnection):
         except Exception as e:
             self.logger.debug("Error closing console transport: %s", e)
 
-    def set_base_prompt(self, pri_prompt_terminator='#',
-                        alt_prompt_terminator='$', delay_factor=1):
+    def set_base_prompt(self, pri_prompt_terminator=DEFAULT_PRI_PROMPT_TERMINATOR,
+                        alt_prompt_terminator=DEFAULT_ALT_PROMPT_TERMINATOR, delay_factor=DEFAULT_DELAY_FACTOR):
         return super(BaseConsoleConn, self).set_base_prompt(
             pri_prompt_terminator=pri_prompt_terminator,
             alt_prompt_terminator=alt_prompt_terminator,
@@ -208,11 +203,11 @@ class BaseConsoleConn(CiscoBaseConnection):
         self.write_channel(command + self.RETURN)
         self.read_until_pattern(pattern=pattern)
 
-    def disable_paging(self, command="", delay_factor=1):
+    def disable_paging(self, command="", delay_factor=DEFAULT_DELAY_FACTOR):
         # not supported
         pass
 
-    def find_prompt(self, delay_factor=1, **kwargs):
+    def find_prompt(self, delay_factor=DEFAULT_DELAY_FACTOR, **kwargs):
         return super(BaseConsoleConn, self).find_prompt(delay_factor, **kwargs)
 
     def clear_buffer(self):
